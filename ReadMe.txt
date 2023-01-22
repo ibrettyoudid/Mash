@@ -1,3 +1,8 @@
+
+
+Git is at C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\TeamFoundation\Team Explorer\Git\cmd
+
+git pull https://github.com/ibrettyoudid/Mash master --allow-unrelated-histories
 ========================================================================
 AppWizard uses "TODO:" comments to indicate parts of the source code you
 should add to or customize.

@@ -33,4 +33,4 @@ typedef signed __int64 int64_t;
 #else
 #include <stdint.h>
 #endif
-#include <stringops.h>
+#include "stringops.h"

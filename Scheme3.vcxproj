@@ -78,7 +78,6 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);D:\Code\BCB\Lib\;D:\Code\BCB\mystl\;</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
@@ -143,26 +142,27 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\..\BCB\mystl\stringops.cpp" />
-    <ClCompile Include="..\..\..\BCB\mystl\TimerFrame.cpp" />
     <ClCompile Include="any.cpp" />
     <ClCompile Include="classes.cpp" />
     <ClCompile Include="InterpL.cpp" />
     <ClCompile Include="Parser.cpp" />
     <ClCompile Include="Parser2.cpp" />
     <ClCompile Include="stdafx.cpp" />
+    <ClCompile Include="stringops.cpp" />
+    <ClCompile Include="TimerFrame.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\..\BCB\mystl\stringops.h" />
-    <ClInclude Include="..\..\..\BCB\mystl\TimerFrame.h" />
     <ClInclude Include="any.h" />
     <ClInclude Include="classes.h" />
     <ClInclude Include="InterpL.h" />
+    <ClInclude Include="make_vec.h" />
     <ClInclude Include="make_vec_rule.h" />
     <ClInclude Include="Parser.h" />
     <ClInclude Include="Parser2.h" />
     <ClInclude Include="stdafx.h" />
+    <ClInclude Include="stringops.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="TimerFrame.h" />
     <ClInclude Include="Tokens.h" />
   </ItemGroup>
   <ItemGroup>
