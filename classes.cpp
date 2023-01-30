@@ -13,12 +13,20 @@ Symbol* symBlankArg = getSymbol("_", 0, 0);
 
 Symbol* getSymbol(string name, int group, int id)
 {
-   return const_cast<Symbol*>(&*symbols.insert(Symbol(name, group, id)).first);
+   Symbol s(name);
+   auto i = symbols.find(&s);
+   if (i == symbols.end())
+   {
+      Symbol* sp = new Symbol(name, group, id);
+      symbols.insert(sp);
+      return sp;
+   }
+   return *i;
 }
 Cons* nil = nullptr;
 
+MultimethodAny       massign     ("assign");
 Multimethod<string>  toTextAux   ("toTextAux");
-Multimethod<string>  toTextMaxAux("toTextMaxAux");
 Multimethod<void>    findCycles  ("findCycles");
 MultimethodAny       pushBack    ;
 MultimethodAny       insertElemX ;
@@ -72,13 +80,15 @@ TypeInfo* tiUnsigned;
 TypeInfo* tiFloating;
 TypeInfo* tiInteger ;
 TypeInfo* tiNumber  ;
-TypeInfo* tiClosure  ;
+TypeInfo* tiListClosure  ;
+TypeInfo* tiStructClosure;
 TypeInfo* tiParseEnd;
 TypeInfo* tiString  ;
 TypeInfo* tiVarRef  ; 
 TypeInfo* tiVarFunc ;
 TypeInfo* tiPartApply;
 TypeInfo* tiTypeInfo;
+TypeInfo* tiVec;
 
 Frame* globalFrame;
 
@@ -86,7 +96,7 @@ set<void*> marked;
 map<void*, int> cycles;
 int cycleCounter;
 
-Closure::Closure(Any _params, Any _body, Frame* _context) : body(_body), context(_context)
+List::Closure::Closure(Any _params, Any _body, Frame* _context) : body(_body), context(_context)
 {
    while (_params.typeInfo == tiCons && _params.as<Cons*>() != nil)
    {
@@ -97,7 +107,7 @@ Closure::Closure(Any _params, Any _body, Frame* _context) : body(_body), context
    if (_params.typeInfo == tiSymbol)
    {
       rest = Var(symbolText(_params));
-      maxArgs = 2147647483;
+      maxArgs = INT_MAX;
    }
 }
 
@@ -233,20 +243,20 @@ Any drop(Cons* c, int n)
    return c;
 }
 
-
+template <class T> auto tassign  (T& a, T b) { return a = b; }
 template <class T> T tadd     (T a, T b) { return a+b; }
 template <class T> T tsubtract(T a, T b) { return a-b; }
 template <class T> T tmultiply(T a, T b) { return a*b; }
 template <class T> T tdivide  (T a, T b) { return a/b; }
 
-template <class T> bool tless     (T a, T b) { return a< b; }
-template <class T> bool tlessEqual(T a, T b) { return a<=b; }
-template <class T> bool tmore     (T a, T b) { return a> b; }
-template <class T> bool tmoreEqual(T a, T b) { return a>=b; }
-template <class T> bool tequal    (T a, T b) { return a==b; }
-template <class T> bool tnotEqual (T a, T b) { return a!=b; }
+template <class T> bool tequal    (T a, T b) { return a == b; }
+template <class T> bool tnotEqual (T a, T b) { return a != b; }
+template <class T> bool tless     (T a, T b) { return a <  b; }
+template <class T> bool tlessEqual(T a, T b) { return a <= b; }
+template <class T> bool tmore     (T a, T b) { return a >  b; }
+template <class T> bool tmoreEqual(T a, T b) { return a >= b; }
 
-template <class T> string ttoText(T a) 
+template <class T> string ttoText(T a, int max) 
 {
    std::stringstream ss; 
    ss << a;
@@ -257,6 +267,8 @@ template <class T, class U> U tto(T a) { return (U)a; }
 template <class T>
 void addMathOps(bool toTextOps = true)
 {
+   massign   .add(tassign   <T>);
+
    madd      .add(tadd      <T>);
    msubtract .add(tsubtract <T>);
    mmultiply .add(tmultiply <T>);
@@ -282,12 +294,7 @@ string symbolText(Symbol* symbol)
 toText -> findCycles
        -> toTextAux
 
-toTextMax -> findCycles
-          -> toTextMaxAux
-
---------------------------
-
-toTextAux :: MultiMethod
+toTextAux is a MultiMethod of
 
 non-containers:
 toTextCons
@@ -301,38 +308,16 @@ toTextTypeInfo
 toTextMultimethod
 toTextVar
 
-toTextCont<C> just calls toTextMaxCont<C>
-
 fallthrough = toTextAny which uses the member pointers in the typeInfo to display any type at all
-
----------------------------
-
-toTextMaxAux :: MultiMethod
-
-only for containers, everything else falls through
-
-toTextMaxCont<C> is a big function
-
-fallthrough = toTextMaxAny just calls toTextAux (this is not an infinite loop, toTextMax<C> calls toTextMaxCont<C>)
-
 */
 
-string toText(Any a)
+string toText(Any a, int max)
 {
    marked.clear();
    cycles.clear();
    cycleCounter = 0;
    findCycles(a);
-   return toTextAux(a);
-}
-
-string toTextMax(Any a, int max)
-{
-   marked.clear();
-   cycles.clear();
-   cycleCounter = 0;
-   findCycles(a);
-   return toTextMaxAux(a, max);
+   return toTextAux(a, max);
 }
 
 template <class C>
@@ -365,73 +350,65 @@ string indent(string in, unsigned int n)
 }
 
 template <class C>
-string toTextMaxCont(C* c, int max)
+string toTextCont(C* c, int max = INT_MAX)
 {
    string result("[");
    vector<string> elemStrs;
    typename C::iterator b = c->begin();
    typename C::iterator e = c->end();
    int len = 2;
-   for (typename C::iterator i = b; i != e; ++i)
+   for (typename C::iterator i = b; i != e;)
    {
-      if (i != b) ++len;
-      string elemStr(toTextMax(*i, max - len));
+      string elemStr(toTextAux(*i, max - len));
       if (cycles.count(&*i))
          elemStr = string("#") + cycles[&*i] + "=" + elemStr;
+      ++i;
+      if (i != e) elemStr += ",";
       elemStrs.push_back(elemStr);
       len += elemStr.size();
    }
    int count = elemStrs.size();
    if (len > max)
    {
-      for (int i = 0; i < count; ++i)
+      for (int i = 0; i < count;)
       {
-         if (i > 0) result += ",\n";
          result += indent(elemStrs[i], 1);
+         ++i;
+         if (i < count) result += "\n";
       }
    }
    else
    {
-      for (int i = 0; i < count; ++i)
+      for (int i = 0; i < count;)
       {
-         if (i > 0) result += ", ";
          result += elemStrs[i];
+         ++i;
+         if (i < count) result += " ";
       }
    }                    
    result += "]";
    return result;
 }
 
-template <class C>
-string toTextCont(C* c)
-{
-   return toTextMaxCont(c, LLONG_MAX);
-}
-
-string toTextMaxAny(Any a, int max)
-{
-   return toTextAux(a);
-}
-
-string toTextInt(int n)
+string toTextInt(int n, int max)
 {
    return TS+n;
 }
 
-string toTextIntR(int& n)
+string toTextIntR(int& n, int max)
 {
    return TS+n;
 }
 
-string toTextBool(bool b)
+string toTextBool(bool b, int max)
 {
    return b ? "true" : "false";
 }
 
-string toTextCons(Cons* c)
+string toTextCons(Cons* c, int max)
 {
    if (c == nullptr) return "()";
-   string result(TS+"("+toText(c->car));
+   string result(TS+"("+toTextAux(c->car, max));
    Any a = c->cdr;
    for (;;)
    {
@@ -443,48 +420,48 @@ string toTextCons(Cons* c)
       if (a.typeInfo == tiCons)
       {
          c = a;
-         result += " "+toText(c->car);
+         result += " "+toTextAux(c->car, max);
          a = c->cdr;
       }
       else
       {
-         result += " . "+toText(a)+")";
+         result += " . "+toTextAux(a, max)+")";
          return result;
       }
    }
 }
 
-string toTextCons1(Cons* c)
+string toTextCons1(Cons* c, int max)
 {
-   return TS+"("+toText(c->car)+" . "+toText(c->cdr)+")";
+   return TS+"("+toTextAux(c->car, max)+" . "+toTextAux(c->cdr, max)+")";
 }
 
-string toTextSym(Symbol* s)
+string toTextSym(Symbol* s, int max)
 {
    return s->name;
 }
 
-string toTextOp(Op* op)
+string toTextOp(Op* op, int max)
 {
    return op->name;
 }
 
-string toTextParseEnd(ParseEnd p)
+string toTextParseEnd(ParseEnd p, int max)
 {
    return "$$$ParseEnd$$$";
 }
 
-string toTextChar(char c)
+string toTextChar(char c, int max)
 {
    return TS+"'"+string(1, c)+"'";
 }
 
-string toTextString(string s)
+string toTextString(string s, int max)
 {
    return TS+"\""+s+"\"";
 }
 
-string toTextLambda(Closure* l)
+string toTextLambda(List::Closure* l, int max)
 {
    string result = "\\";
    for (int i = 0; i < (int)l->params.size(); ++i)
@@ -492,12 +469,12 @@ string toTextLambda(Closure* l)
       result += l->params[i].name + " ";
    }
    result += "-> ";
-   result += toText(l->body);
+   result += toTextAux(l->body, max);
    return result;
 }
 
 
-string toTextTypeInfo(TypeInfo* ti)
+string toTextTypeInfo(TypeInfo* ti, int max)
 {
    string result;
    result += TS+"TypeInfo {\n   name = "+ti->name+"\n   size = "+ti->size+"\n   kind = ";
@@ -525,7 +502,7 @@ string toTextTypeInfo(TypeInfo* ti)
    return result;
 }
 
-string toTextFrame(Frame* f)
+string toTextFrame(Frame* f, int max)
 {
    if (f == nullptr)
       return "nullptr";
@@ -534,22 +511,22 @@ string toTextFrame(Frame* f)
    else if (f == (Frame*)0xCDCDCDCD)
       return "0xCDCDCDCD";
    else if (f->visible)
-      return TS+"Frame { "+toTextAny(f)+" }";
+      return TS+"Frame { "+toTextAny(f, max)+" }";
    else
       return TS+"HiddenFrame";
 }
 
-string toTextMultimethod(MultimethodAny m)
+string toTextMultimethod(MultimethodAny m, int max)
 {
    return TS+"Multimethod("+m.name+")";
 }
 
-string toTextVar(Var v)
+string toTextVar(Var v, int max)
 {
-   return TS+v.name+" = "+toText(v.value);
+   return TS+v.name+" = "+toText(v.value, max);
 }
 
-string toTextAny(Any a)
+string toTextAny(Any a, int max)
 {
    ostringstream o;
    if (a.typeInfo->kind == kFunction)
@@ -583,6 +560,7 @@ string toTextAny(Any a)
       }
       if (a.prDepth() == 0)
       {
+         o << a.typeInfo->getName() << " ";
          o << "{";
          for (int i = 0; i < (int)a.typeInfo->args.size(); ++i)
          {
@@ -592,7 +570,7 @@ string toTextAny(Any a)
             //Any v(a[i]);
             //v = v.derp();
             //v.showhex();
-            o << toTextAux(a[i].derp());
+            o << toTextAux(a[i].derp(), max);
             //vars.push_back(Var(a.typeInfo->args[i]->name, a.typeInfo->args[i]->ptrToMember(a)));
          }
          o << "}";
@@ -647,6 +625,8 @@ template <class C>
 TypeInfo* addContainer(bool textOps = true)
 {
    typedef typename C::iterator I;
+   massign     .add(tassign        <C>);
+   massign     .add(tassign        <I>);
    insertElemX .add(tinsertElemIX  <C>);
    insertElemX .add(tinsertElemIntX<C>);
    eraseElemX  .add(teraseElemIX   <C>);
@@ -666,7 +646,6 @@ TypeInfo* addContainer(bool textOps = true)
    mnotEqual   .add(inotEqual<I>);
    if (textOps)
    {
-      toTextMaxAux.add(toTextMaxCont<C>);
       toTextAux   .add(toTextCont<C>);
    }
 
@@ -798,7 +777,7 @@ Cons* mapCons(Any f, Cons* c)
    return res;
 }
 
-Any closureDeleg(Any* lambdaP, Any* params, int np)
+Any List::closureDeleg(Any* lambdaP, Any* params, int np)
 {
    Vec vp(params, params + np);
    return List::apply(*lambdaP, &vp);
@@ -863,9 +842,9 @@ Any applyC(Any a, Any b)
    return a(b);
 }
 
-Closure* compose(Any a, Any b)
+List::Closure* compose(Any a, Any b)
 {
-   Closure* lambda = new Closure;
+   List::Closure* lambda = new List::Closure;
    lambda->params.push_back(Var("a"));
    lambda->body = mylist(a, mylist(b, getSymbol("a")));
    lambda->context = nullptr;
@@ -902,7 +881,7 @@ void setup()
    tiDouble    = getTypeAdd<double    >();
    tiSymbol    = getTypeAdd<Symbol   *>();
    tiCons      = getTypeAdd<Cons     *>();
-   tiClosure   = getTypeAdd<Closure  *>();
+   tiListClosure   = getTypeAdd<List::Closure*>();
    tiString    = getTypeAdd<string    >()->setName("string");
    tiVarRef    = getTypeAdd<VarRef   *>();
    tiVarFunc   = getTypeAdd<VarFunc   >();
@@ -982,7 +961,7 @@ void setup()
    mnotEqual.add(notEqualSymbol);
 
    addContainer<vector<int> >()->setName("vector<int>");
-   addContainer<vector<Any> >()->setName("vector<Any>");
+   tiVec = addContainer<vector<Any> >()->setName("vector<Any>");
    addContainer<deque <int> >()->setName("deque<int>");
    addContainer<deque <Var> >()->setName("deque<Var>");
    addContainer<string      >(false)->setName("string");
@@ -998,6 +977,7 @@ void setup()
    addMathOps<int64_t>();
    addMathOps< double>();
    addMathOps<  float>();
+   addGlobal("set!"    , massign   );
    addGlobal("+"       , madd      );
    addGlobal("-"       , msubtract );
    addGlobal("*"       , mmultiply );
@@ -1016,7 +996,7 @@ void setup()
    addGlobal("second"  , second    );
    addGlobal("third"   , third     );
    addGlobal("fourth"  , fourth    );
-   addGlobal("list"    , VarFunc   (mylistN, 0, 1000000000));
+   addGlobal("list"    , VarFunc   (mylistN, 0, INT_MAX));
    addGlobal("toText"  , toText    );
    addGlobal("map"     , mapCons   );
 
@@ -1054,7 +1034,6 @@ void setup()
    addGlobal("length", length);
    addGlobal("names", fileNames);
    toTextAux   .add(toTextAny);
-   toTextMaxAux.add(toTextMaxAny);
    findCycles  .add(findCyclesAny);
    initParser2();
    for (auto &p : typeMap)

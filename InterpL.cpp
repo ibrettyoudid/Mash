@@ -299,7 +299,7 @@ void InterpL::apply(Any func, Vec* a)
 
    nArgs  = args.size();
    lambda = nullptr;
-   if (func.typeInfo == tiClosure)
+   if (func.typeInfo == tiListClosure)
    {
       lambda  = func;
       minArgs = lambda->minArgs;
@@ -341,7 +341,7 @@ void InterpL::apply(Any func, Vec* a)
          push(cons(getSymbol("applyTo"), rest), nullptr);
       }
 
-      if (func.typeInfo == tiClosure)
+      if (func.typeInfo == tiListClosure)
       {
          Closure* lambda = func;
 
@@ -586,7 +586,7 @@ Any eval1(Any expr, Frame* env)
                }
                if (params.typeInfo == tiSymbol)
                {
-                  newclos->maxArgs = 1000000000;
+                  newclos->maxArgs = INT_MAX;
                   newclos->rest    = symbolText(params);
                }
                else
@@ -684,7 +684,7 @@ Any apply1(Any func, Vec* a)
       closure  = nullptr;
       minArgs = func.minArgs();
       maxArgs = func.maxArgs();
-      if (func.typeInfo == tiClosure)
+      if (func.typeInfo == tiListClosure)
       {
          closure  = func;
       }
@@ -886,21 +886,22 @@ int _tmain(int argc, _TCHAR* argv[])
    cout << "&globalFrame->vars   : " << toTextAny(&globalFrame->vars) << endl;
    cout << " globalFrame         : " << toTextAny(globalFrame) << endl;
 
-   cout << "Parser2 test" << endl;
+   cout << "INT_MAX=" << INT_MAX << endl;
+   cout << "sizeof(int)=" << sizeof(int) << endl;
 
    cout << getTypeAdd<int[100]>() << endl;
-   //initParser2();
    //cout << getTypeAdd<int[]>() << endl;
 
    for (;;)
    {
-      cout << "\033[32mscheme>\033[0m";
+      cout << "\033[32mscheme>\033[0m ";
       cout.flush();
       char inputChars[1000];
       cin.getline(inputChars, 1000);
       string input(inputChars);
-      //parse(expr, input);
 #if 1
+      parse(expr, input);
+#else
       Any expr = parser.setProgram(input)->initUnit()->parseSExpr();//parser.setProgram(user)->initUnit()->parseExpr();
       List::compile(expr, userFrame);
       cout << expr << endl;

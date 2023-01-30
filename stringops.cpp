@@ -37,23 +37,23 @@ namespace std
    string loadString(string name)
    {
    #ifdef _WINDOWS
-      std::ifstream strm(name.c_str(), std::ios_base::in, _SH_DENYNO);
+      std::ifstream strm(name.c_str(), std::ios_base::in | std::ios_base::binary, _SH_DENYNO);
    #else
-      std::ifstream strm(name.c_str(), std::ios_base::in);
+      std::ifstream strm(name.c_str(), std::ios_base::in | std::ios_base::binary);
    #endif
       if (strm.fail())
          throw file_not_found();
       strm.seekg(0, ios_base::end);
       string result(strm.tellg(), ' ');
       strm.seekg(0);
-      strm.read(const_cast<char*>(result.c_str()), result.size());
+      strm.read(&result[0], result.size());
       return result;
    }
 
    void saveString(const string& str, string name)
    {
-      std::ofstream strm(name.c_str(), std::ios_base::out);
-      strm.write(str.c_str(), str.size());
+      std::ofstream strm(name.c_str(), std::ios_base::out | std::ios_base::binary);
+      strm.write(&str[0], str.size());
    }
 
    string pad(string In, int Len)

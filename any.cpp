@@ -1,6 +1,7 @@
 // Copyright (c) 2023 Brett Curtis
 #include "stdafx.h"
 #include "any.h"
+#include "classes.h"
 #include <deque>
 
 using namespace std;
@@ -34,6 +35,340 @@ TypeLink* joinLinks(TypeLink* btod, TypeLink* dtodd)
 }
 
 struct NoGoodHeads{};
+
+bool LessMemberName::operator()(const Member* lhs, const Member* rhs) const
+{
+   return lhs->symbol < rhs->symbol;
+}
+Member* MemberList::add(Member v)
+{
+   if (v.symbol == nullptr)
+   {
+      Member* vp = new Member(v);
+      //byName.insert(vp);
+      byOffset.push_back(vp);
+      return vp;
+   }
+   auto i = byName.find(&v);
+   if (i == byName.end())
+   {
+      Member* vp = new Member(v);
+      byName.insert(vp);
+      byOffset.push_back(vp);
+      return vp;
+   }
+   throw "member already exists!";
+   return nullptr;
+}
+Member* MemberList::operator[](Member& v)
+{
+   auto i = byName.find(&v);
+   if (i != byName.end())
+   {
+      return *i;
+   }
+   throw "member not found!";
+}
+Member* MemberList::operator[](Symbol* symbol)
+{
+   Member v(symbol);
+   auto i = byName.find(&v);
+   if (i != byName.end())
+   {
+      return *i;
+   }
+   throw "member not found!";
+}
+Member* MemberList::operator[](std::string name)
+{
+   Member v(getSymbol(name));
+   auto i = byName.find(&v);
+   if (i != byName.end())
+   {
+      return *i;
+   }
+   throw "member not found!";
+}
+
+Member* MemberList::operator[](int n)
+{
+   return byOffset[n];
+}
+
+int MemberList::size()
+{
+   return byOffset.size();
+}
+
+Any::Any() : typeInfo(nullptr), ptr(nullptr)
+{
+   construct(0);
+}
+
+Any::Any(const Any& rhs)
+{
+   typeInfo = rhs.typeInfo;
+   ptr = new char[typeInfo->size];
+   typeInfo->copyCon(ptr, rhs.ptr, typeInfo);
+}
+
+Any::Any(Any&& rhs) : typeInfo(rhs.typeInfo), ptr(rhs.ptr)
+{
+   rhs.ptr = nullptr;
+}  
+
+Any& Any::operator=(const Any& rhs)
+{
+   delete[] static_cast<char*>(ptr);
+   typeInfo = rhs.typeInfo;
+   ptr = new char[typeInfo->size];
+   typeInfo->copyCon(ptr, rhs.ptr, typeInfo);
+   return *this;
+}
+Any& Any::operator=(Any&& rhs)
+{
+   delete[] static_cast<char*>(ptr);
+   typeInfo = rhs.typeInfo;
+   ptr = rhs.ptr;
+   rhs.ptr = nullptr;
+   return *this;
+}
+
+Any::Any(TypeInfo* typeInfo, void* rhs) : typeInfo(typeInfo)
+{
+   ptr = new char[typeInfo->size];//creates a copy on construction
+   typeInfo->copyCon(ptr, rhs, typeInfo);
+}
+Any::~Any()
+{
+   delete[] static_cast<char*>(ptr);
+}
+Any Any::call(Any* args, int n)
+{
+   return typeInfo->delegPtr(this, args, n);
+}
+Any Any::operator()()
+{
+   return typeInfo->delegPtr(this, nullptr, 0);
+}
+Any Any::operator()(Any arg0)
+{
+   return typeInfo->delegPtr(this, &arg0, 1);
+}
+Any Any::operator()(Any arg0, Any arg1)
+{
+   Any args[2] = { arg0, arg1 };
+   return typeInfo->delegPtr(this, args, 2);
+}
+Any Any::operator()(Any arg0, Any arg1, Any arg2)
+{
+   Any args[3] = { arg0, arg1, arg2 };
+   return typeInfo->delegPtr(this, args, 3);
+}
+Any Any::operator()(Any arg0, Any arg1, Any arg2, Any arg3)
+{
+   Any args[4] = { arg0, arg1, arg2, arg3 };
+   return typeInfo->delegPtr(this, args, 4);
+}
+Any Any::operator()(Any arg0, Any arg1, Any arg2, Any arg3, Any arg4)
+{
+   Any args[5] = { arg0, arg1, arg2, arg3, arg4 };
+   return typeInfo->delegPtr(this, args, 5);
+}
+//--------------------------------------------------------------------------- CONVERSION
+Any Any::derp()
+{
+   return Any(typeInfo->of, *(void**)ptr);
+}
+
+Any::operator MMBase& ()
+{
+   if (typeInfo->kind == kPointer && typeInfo->of->multimethod) return **static_cast<MMBase**>(ptr);
+   if (typeInfo->multimethod) return *static_cast<MMBase*>(ptr);
+   std::cout << TS + "type mismatch: casting " + typeInfo->name + " to MMBase&" << std::endl;
+   throw "type mismatch";
+}
+//---------------------------------------------------------------------------
+std::string Any::typeName()
+{
+   return typeInfo->getName();
+   if (typeInfo->name.substr(0, 7) == "struct ")
+      return typeInfo->name.substr(7);
+   else if (typeInfo->name.substr(0, 6) == "class ")
+      return typeInfo->name.substr(6);
+   else
+      return typeInfo->name;
+}
+TypeInfo* Any::paramType(int n)
+{
+   return typeInfo->argType(n);
+}
+bool Any::isPtrTo(TypeInfo* other)
+{
+   return typeInfo->isPtrTo(other);
+}
+bool Any::isRefTo(TypeInfo* other)
+{
+   return typeInfo->isRefTo(other);
+}
+bool Any::isPRTF(TypeInfo* other)
+{
+   return typeInfo->isPRTF(other);
+}
+bool Any::callable()
+{
+   return typeInfo == tiListClosure || typeInfo == tiStructClosure || typeInfo == tiVarFunc || typeInfo->multimethod || typeInfo->kind == kFunction;
+}
+
+int Any::maxArgs()
+{
+   if (typeInfo == tiListClosure)
+      return as<List::Closure*>()->maxArgs;
+   else if (typeInfo == tiVarFunc)
+      return as<VarFunc>().maxArgs;
+   else if (typeInfo->multimethod)
+      return ((MMBase&)*this).minArgs;
+   else if (typeInfo->kind == kFunction)
+      return typeInfo->args.size();
+   else
+   {
+      cout << "maxArgs called for non-function" << endl;
+      cout << typeInfo->fullName << endl;
+      throw "maxArgs called for non-function";
+   }
+}
+
+int Any::minArgs()
+{
+   if (typeInfo == tiListClosure)
+      return as<List::Closure*>()->minArgs;
+   else if (typeInfo == tiVarFunc)
+      return as<VarFunc>().minArgs;
+   else if (typeInfo->multimethod)
+      return ((MMBase&)*this).minArgs;
+   else if (typeInfo->kind == kFunction)
+      return typeInfo->args.size();
+   else
+   {
+      cout << "minArgs called for non-function" << endl;
+      cout << typeInfo->fullName << endl;
+      cout.flush();
+      throw "minArgs called for non-function";
+   }
+}
+
+string hex(unsigned char* b, unsigned char* e)
+{
+   ostringstream o;
+   int step = 8;
+   for (unsigned char* c = b; c < e; c += step)
+   {
+      if (c > b) o << endl;
+      o << (int*)c << " ";
+      for (unsigned char* c1 = c; c1 < c + step && c1 < e; ++c1)
+         o << "0123456789ABCDEF"[(*c1 >> 4) & 0xF] << "0123456789ABCDEF"[*c1 & 0xF] << " ";
+      for (unsigned char* c1 = c; c1 < c + step && c1 < e; ++c1)
+         if (*c1 >= 32) o << *c1; else o << ".";
+   }
+   return o.str();
+}
+
+void showhex(unsigned char* b, unsigned char* e)
+{
+   cout << hex(b, e);
+}
+
+string Any::hex()
+{
+   unsigned char* b = (unsigned char*)ptr;
+   unsigned char* e = b + typeInfo->size;
+   return ::hex(b, e);
+}
+
+void Any::showhex()
+{
+   cout << hex();
+}
+
+int Any::pDepth()
+{
+   TypeInfo* ti = typeInfo;
+   int count = 0;
+   while (true)
+   {
+      if (ti->kind == kPointer || ti->kind == kReference)
+      {
+         if (ti->kind == kPointer) ++count;
+         ti = ti->of;
+      }
+      else break;
+   }
+   return count;
+}
+
+int Any::rDepth()
+{
+   TypeInfo* ti = typeInfo;
+   int count = 0;
+   while (true)
+   {
+      if (ti->kind == kPointer || ti->kind == kReference)
+      {
+         if (ti->kind == kReference) ++count;
+         ti = ti->of;
+      }
+      else break;
+   }
+   return count;
+}
+
+int Any::prDepth()
+{
+   TypeInfo* ti = typeInfo;
+   int count = 0;
+   while (true)
+   {
+      if (ti->kind == kPointer || ti->kind == kReference)
+      {
+         ++count;
+         ti = ti->of;
+      }
+      else break;
+   }
+   return count;
+}
+
+Any Any::add(Member m, Any value)
+{
+
+   TypeInfo* typeInfoNew = new TypeInfo(*typeInfo);
+   Member* pm = typeInfoNew->add(m);
+   void* ptrNew = new char[typeInfoNew->size];
+   typeInfo->copyCon(ptrNew, ptr, typeInfo);
+   delete[](ptr);
+   ptr = ptrNew;
+   typeInfo = typeInfoNew;
+   pm->setMember(pm, *this, value);
+   return value;
+}
+
+Member* Any::operator[](Symbol* symbol)
+{
+   Member* m = (*typeInfo)[symbol];
+   return (*m->getMemberRef)(m, *this);
+}
+
+Member* Any::operator[](std::string name)
+{
+   Member* m = (*typeInfo)[name];
+   return (*m->getMemberRef)(m, *this);
+}
+
+Any Any::operator[](int n)
+{
+   Member* m = (*typeInfo)[n];
+   return (*m->getMemberRef)(m, *this);
+}
 
 void TypeInfo::doC3Lin()
 {
@@ -347,346 +682,13 @@ PartApply* makePartApply(Any f, Any a0, Any a1)
    return res;
 }
 
-extern TypeInfo* tiClosure;
+extern TypeInfo* tiListClosure;
+extern TypeInfo* tiStructClosure;
 extern TypeInfo* tiVarFunc;
 
 Any delegVF(Any* fp, Any* args, int n)
 {
    return fp->as<VarFunc>().func(args, n);
-}
-
-bool LessMemberName::operator()(const Member* lhs, const Member* rhs) const
-{
-   return lhs->symbol < rhs->symbol;
-}
-Member* MemberList::add(Member v)
-{
-   if (v.symbol == nullptr)
-   {
-      Member* vp = new Member(v);
-      //byName.insert(vp);
-      byOffset.push_back(vp);
-      return vp;
-   }
-   auto i = byName.find(&v);
-   if (i == byName.end())
-   {
-      Member* vp = new Member(v);
-      byName.insert(vp);
-      byOffset.push_back(vp);
-      return vp;
-   }
-   throw "member already exists!";
-   return nullptr;
-}
-Member* MemberList::operator[](Member& v)
-{
-   auto i = byName.find(&v);
-   if (i != byName.end())
-   {
-      return *i;
-   }
-   throw "member not found!";
-}
-Member* MemberList::operator[](Symbol* symbol)
-{
-   Member v(symbol);
-   auto i = byName.find(&v);
-   if (i != byName.end())
-   {
-      return *i;
-   }
-   throw "member not found!";
-}
-Member* MemberList::operator[](std::string name)
-{
-   Member v(getSymbol(name));
-   auto i = byName.find(&v);
-   if (i != byName.end())
-   {
-      return *i;
-   }
-   throw "member not found!";
-}
-
-Member* MemberList::operator[](int n)
-{
-   return byOffset[n];
-}
-
-int MemberList::size()
-{
-   return byOffset.size();
-}
-
-Any::Any() : typeInfo(nullptr), ptr(nullptr)
-{
-   construct(0);
-}
-
-Any::Any(const Any& rhs)
-{
-   typeInfo = rhs.typeInfo;
-   ptr = new char[typeInfo->size];
-   typeInfo->copyCon(ptr, rhs.ptr, typeInfo);
-}
-
-Any::Any(Any&& rhs) : typeInfo(rhs.typeInfo), ptr(rhs.ptr)
-{
-   rhs.ptr = nullptr;
-}  
-
-Any& Any::operator=(const Any& rhs)
-{
-   delete[] static_cast<char*>(ptr);
-   typeInfo = rhs.typeInfo;
-   ptr = new char[typeInfo->size];
-   typeInfo->copyCon(ptr, rhs.ptr, typeInfo);
-   return *this;
-}
-Any& Any::operator=(Any&& rhs)
-{
-   delete[] static_cast<char*>(ptr);
-   typeInfo = rhs.typeInfo;
-   ptr = rhs.ptr;
-   rhs.ptr = nullptr;
-   return *this;
-}
-
-Any::Any(TypeInfo* typeInfo, void* rhs) : typeInfo(typeInfo)
-{
-   ptr = new char[typeInfo->size];//creates a copy on construction
-   typeInfo->copyCon(ptr, rhs, typeInfo);
-}
-Any::~Any()
-{
-   delete[] static_cast<char*>(ptr);
-}
-Any Any::call(Any* args, int n)
-{
-   return typeInfo->delegPtr(this, args, n);
-}
-Any Any::operator()()
-{
-   return typeInfo->delegPtr(this, nullptr, 0);
-}
-Any Any::operator()(Any arg0)
-{
-   return typeInfo->delegPtr(this, &arg0, 1);
-}
-Any Any::operator()(Any arg0, Any arg1)
-{
-   Any args[2] = { arg0, arg1 };
-   return typeInfo->delegPtr(this, args, 2);
-}
-Any Any::operator()(Any arg0, Any arg1, Any arg2)
-{
-   Any args[3] = { arg0, arg1, arg2 };
-   return typeInfo->delegPtr(this, args, 3);
-}
-Any Any::operator()(Any arg0, Any arg1, Any arg2, Any arg3)
-{
-   Any args[4] = { arg0, arg1, arg2, arg3 };
-   return typeInfo->delegPtr(this, args, 4);
-}
-Any Any::operator()(Any arg0, Any arg1, Any arg2, Any arg3, Any arg4)
-{
-   Any args[5] = { arg0, arg1, arg2, arg3, arg4 };
-   return typeInfo->delegPtr(this, args, 5);
-}
-//--------------------------------------------------------------------------- CONVERSION
-Any Any::derp()
-{
-   return Any(typeInfo->of, *(void**)ptr);
-}
-
-Any::operator MMBase& ()
-{
-   if (typeInfo->kind == kPointer && typeInfo->of->multimethod) return **static_cast<MMBase**>(ptr);
-   if (typeInfo->multimethod) return *static_cast<MMBase*>(ptr);
-   std::cout << TS + "type mismatch: casting " + typeInfo->name + " to MMBase&" << std::endl;
-   throw "type mismatch";
-}
-//---------------------------------------------------------------------------
-std::string Any::typeName()
-{
-   return typeInfo->getName();
-   if (typeInfo->name.substr(0, 7) == "struct ")
-      return typeInfo->name.substr(7);
-   else if (typeInfo->name.substr(0, 6) == "class ")
-      return typeInfo->name.substr(6);
-   else
-      return typeInfo->name;
-}
-TypeInfo* Any::paramType(int n)
-{
-   return typeInfo->argType(n);
-}
-bool Any::isPtrTo(TypeInfo* other)
-{
-   return typeInfo->isPtrTo(other);
-}
-bool Any::isRefTo(TypeInfo* other)
-{
-   return typeInfo->isRefTo(other);
-}
-bool Any::isPRTF(TypeInfo* other)
-{
-   return typeInfo->isPRTF(other);
-}
-bool Any::callable()
-{
-   return typeInfo == tiClosure || typeInfo == tiVarFunc || typeInfo->multimethod || typeInfo->kind == kFunction;
-}
-
-int Any::maxArgs()
-{
-   if (typeInfo == tiClosure)
-      return as<Closure*>()->maxArgs;
-   else if (typeInfo == tiVarFunc)
-      return as<VarFunc>().maxArgs;
-   else if (typeInfo->multimethod)
-      return ((MMBase&)*this).minArgs;
-   else if (typeInfo->kind == kFunction)
-      return typeInfo->args.size();
-   else
-   {
-      cout << "maxArgs called for non-function" << endl;
-      cout << typeInfo->fullName << endl;
-      throw "maxArgs called for non-function";
-   }
-}
-
-int Any::minArgs()
-{
-   if (typeInfo == tiClosure)
-      return as<Closure*>()->minArgs;
-   else if (typeInfo == tiVarFunc)
-      return as<VarFunc>().minArgs;
-   else if (typeInfo->multimethod)
-      return ((MMBase&)*this).minArgs;
-   else if (typeInfo->kind == kFunction)
-      return typeInfo->args.size();
-   else
-   {
-      cout << "minArgs called for non-function" << endl;
-      cout << typeInfo->fullName << endl;
-      cout.flush();
-      throw "minArgs called for non-function";
-   }
-}
-
-string hex(unsigned char* b, unsigned char* e)
-{
-   ostringstream o;
-   int step = 8;
-   for (unsigned char* c = b; c < e; c += step)
-   {
-      if (c > b) o << endl;
-      o << (int*)c << " ";
-      for (unsigned char* c1 = c; c1 < c + step && c1 < e; ++c1)
-         o << "0123456789ABCDEF"[(*c1 >> 4) & 0xF] << "0123456789ABCDEF"[*c1 & 0xF] << " ";
-      for (unsigned char* c1 = c; c1 < c + step && c1 < e; ++c1)
-         if (*c1 >= 32) o << *c1; else o << ".";
-   }
-   return o.str();
-}
-
-void showhex(unsigned char* b, unsigned char* e)
-{
-   cout << hex(b, e);
-}
-
-string Any::hex()
-{
-   unsigned char* b = (unsigned char*)ptr;
-   unsigned char* e = b + typeInfo->size;
-   return ::hex(b, e);
-}
-
-void Any::showhex()
-{
-   cout << hex();
-}
-
-int Any::pDepth()
-{
-   TypeInfo* ti = typeInfo;
-   int count = 0;
-   while (true)
-   {
-      if (ti->kind == kPointer || ti->kind == kReference)
-      {
-         if (ti->kind == kPointer) ++count;
-         ti = ti->of;
-      }
-      else break;
-   }
-   return count;
-}
-
-int Any::rDepth()
-{
-   TypeInfo* ti = typeInfo;
-   int count = 0;
-   while (true)
-   {
-      if (ti->kind == kPointer || ti->kind == kReference)
-      {
-         if (ti->kind == kReference) ++count;
-         ti = ti->of;
-      }
-      else break;
-   }
-   return count;
-}
-
-int Any::prDepth()
-{
-   TypeInfo* ti = typeInfo;
-   int count = 0;
-   while (true)
-   {
-      if (ti->kind == kPointer || ti->kind == kReference)
-      {
-         ++count;
-         ti = ti->of;
-      }
-      else break;
-   }
-   return count;
-}
-
-Any Any::add(Member m, Any value)
-{
-
-   TypeInfo* typeInfoNew = new TypeInfo(*typeInfo);
-   Member* pm = typeInfoNew->add(m);
-   void* ptrNew = new char[typeInfoNew->size];
-   typeInfo->copyCon(ptrNew, ptr, typeInfo);
-   delete[](ptr);
-   ptr = ptrNew;
-   typeInfo = typeInfoNew;
-   pm->setMember(pm, *this, value);
-   return value;
-}
-
-Member* Any::operator[](Symbol* symbol)
-{
-   Member* m = (*typeInfo)[symbol];
-   return (*m->getMemberRef)(m, *this);
-}
-
-Member* Any::operator[](std::string name)
-{
-   Member* m = (*typeInfo)[name];
-   return (*m->getMemberRef)(m, *this);
-}
-
-Any Any::operator[](int n)
-{
-   Member* m = (*typeInfo)[n];
-   return (*m->getMemberRef)(m, *this);
 }
 
 void addMemberInterp(TypeInfo* _class, std::string name, TypeInfo* type)

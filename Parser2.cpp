@@ -22,6 +22,7 @@ LC Module::lcofpos(int pos)
 
 Epsilon::Epsilon()                      {}
 Range  ::Range  (char min, char max)    : min(min), max(max) {}
+Char   ::Char   (char c)                : c(c) {}
 String ::String (string text)           : text(text) {}
 Alt    ::Alt    ()                      {}
 Alt    ::Alt    (vector<Rule*> _elems)   : elems(_elems) {}
@@ -86,7 +87,7 @@ ParseResult* Rule::parse(State st)
    ODSI("parse "+toTextInt(st.pos)+" "+n);
    ParseResult* r = parse1(st);
    if (r)
-      ODSO("<- parse "+toTextInt(r->endS.pos)+" "+toText(r->ast)+" "+n);
+      ODSO("<- parse "+toTextInt(r->endS.pos)+" "+toText(r->ast)+" parser="+name+" "+n);
    else
       ODSO("<- parse "+n+" failed");
    return r;
@@ -108,7 +109,7 @@ ParseResult* String::parse1(State startS)
    if (startS.module->text.substr(startS.pos, l) == text)
    {
       State endS = startS.advance(l);
-      return new ParseResult(endS, new Literal(text));
+      return new ParseResult(endS, text);
    }
    else
       return nullptr;
@@ -121,7 +122,7 @@ ParseResult* Char::parse1(State startS)
       if (c == (startS.module->text)[startS.pos])
       {
          State endS = startS.advance(1);
-         return new ParseResult(endS, new Literal(c));
+         return new ParseResult(endS, c);
       }
    }
    return nullptr;
@@ -135,7 +136,7 @@ ParseResult* Range::parse1(State startS)
       if (c >= min && c <= max)
       {
          State endS = startS.advance(1);
-         return new ParseResult(endS, new Literal(c));
+         return new ParseResult(endS, c);
       }
    }
    return nullptr;
@@ -145,18 +146,17 @@ ParseResult* Seq::parse1(State startS)
 {
    ParseResult* rinner;
    State s(startS);
-   vector<Any> resElems;
+   Vec resElems;
    for (int i = 0; i < elems.size(); ++i)
    {
       rinner = elems[i]->parse(s);
       if (rinner == nullptr) 
-      {
          return nullptr;
-      }
+      
       s = rinner->endS;
       resElems.push_back(rinner->ast);
    }
-   return new ParseResult(s, new Literal(resElems));
+   return new ParseResult(s, resElems);
 }
 
 ParseResult* Alt::parse1(State startS)
@@ -165,11 +165,7 @@ ParseResult* Alt::parse1(State startS)
    {
       ParseResult* r = elems[i]->parse(startS);
       if (r) 
-      {
-         ParseResult* newRes = new ParseResult(r->endS, r->ast);//what is this for?
-         delete r;
-         return newRes;
-      }
+         return r;
    }
    return nullptr;
 }
@@ -179,26 +175,58 @@ bool doCheckIndent(LC cur, LC min)
    return cur.line > min.line ? cur.col > min.col : cur.col >= min.col;
 }
 
-ParseResult* Indent::parse1(State startS)
+ParseResult* IndentGroup::parse1(State startS)
 {
    LC curLC = startS.module->lcofpos(startS.pos);
-   if (!doCheckIndent(curLC, startS.min)) return nullptr;
+   //if (!doCheckIndent(curLC, startS.min)) return nullptr;
    State innerS(startS);
-   if (indentNext)
-      innerS.min = curLC;
-   else
-      innerS.min = LC(0x7FFFFFFF, curLC.col);
+   //if (indentNext)
+   //   innerS.min = curLC;
+   //else
+   //   innerS.min = LC(INT_MAX, curLC.col);
+   innerS.startGroup = true;
+   innerS.startSingle = false;   
    ParseResult* r = inner->parse(innerS);
-   if (r == nullptr) return r;
+   if (r == nullptr) return nullptr;
    State resS(r->endS);
-   resS.min = startS.min;
-   return new ParseResult(resS, new Literal(r->ast));
+   resS.min         = startS.min;
+   resS.startGroup  = startS.startGroup ;
+   resS.startSingle = startS.startSingle;
+   return new ParseResult(resS, r->ast);
+}
+
+ParseResult* IndentItem::parse1(State startS)
+{
+   LC curLC = startS.module->lcofpos(startS.pos);
+   State innerS(startS);
+   innerS.startSingle = true;
+   ParseResult* r = inner->parse(innerS);
+   if (r == nullptr) return nullptr;
+   State resS(r->endS);
+   resS.min         = startS.min;
+   resS.startGroup  = false;
+   resS.startSingle = startS.startSingle;
+   return new ParseResult(resS, r->ast);
 }
 
 ParseResult* CheckIndent::parse1(State startS)
 {
    LC curLC = startS.module->lcofpos(startS.pos);
-   if (!doCheckIndent(curLC, startS.min)) return nullptr;
+   if (startS.startSingle)
+   {
+      if (startS.startGroup)
+      {
+         startS.min = curLC;
+      }
+      else
+      {
+         if (curLC.col < startS.min.col) return nullptr;
+      }
+   }
+   else
+   {
+      if (curLC.col <= startS.min.col) return nullptr;
+   }
    return new ParseResult(startS, epsilonE);
 }
 
@@ -225,14 +253,19 @@ State State::advance(int n)
    return result;
 }
 
-Vec push_front(Any a, Vec v)
+Vec push_front(Vec v, Any a)
 {
    v.insert(v.begin(), a);
    return v;
 }
 
+Rule* optional(Rule* opt)
+{
+   return alt(opt, new Epsilon);
+}
+
 #if 1
-Vec resMany(Any in)
+Vec manyR(Any in)
 {
    vector<Any> out;
    while (Vec* inv = in.any_cast<Vec>())
@@ -247,7 +280,7 @@ Rule* many(Rule* ru)
 {
    Alt* a = alt();
    *a = *alt(seq(ru, a), new Epsilon);
-   return applyP(resMany, a)->setName("many");
+   return applyP(manyR, a)->setName("many");
 }
 
 #else
@@ -274,26 +307,26 @@ Rule* many(Rule* ru)
 }
 #endif
 
-Vec resMany1A(Vec in)
+Vec many1AR(Vec in)
 {
-   return push_front(in[0], in[1]);
+   return push_front(in[1], in[0]);
 }
 
 Rule* many1(Rule* ru)
 {
    Alt* a = alt();
-   *a = *alt(applyP(resMany1A, seq(ru, a)), seq(ru));
+   *a = *alt(applyP(many1AR, seq(ru, a)), seq(ru));
    return a->setName("many1");
 }
 
-Vec resSepBy(Vec in)
+Vec sepByR(Vec in)
 {
-   return push_front(in[0], in[1]);
+   return push_front(in[1], in[0]);
 }
 
 Rule* sepBy1(Rule* term, Rule* sep)
 {
-   return applyP(resSepBy, seq(term, many(seq(sep, term))));
+   return applyP(sepByR, seq(term, many(seq(sep, term))));
 }
 
 Rule* chainr(Rule* term, Rule* op)
@@ -303,18 +336,18 @@ Rule* chainr(Rule* term, Rule* op)
    return a;
 }
 
-Any resChainL(Vec r)
+Any chainlR(Vec r)
 {
    Any term = r[0];
    Vec ops = r[1];
    for (int i = 0; i < (int)ops.size(); ++i)
-      term = push_front(term, ops[i]);
+      term = push_front(ops[i], term);
    return term;
 }
 
 Rule* chainl(Rule* term, Rule* op)
 {
-   return applyP(resChainL, seq(term, many(seq(op, term))))->setName("chainl");
+   return applyP(chainlR, seq(term, many(seq(op, term))))->setName("chainl");
 }
 
 Rule* whiteSpace = many(new Range(32, 32))->setName("whiteSpace");
@@ -334,20 +367,84 @@ Rule* symbol(string s)
    return lexeme(new String(s));
 }
 
-int integerR(vector<Any> xs)
+string stringOfVec(Vec in)
 {
-   int n = 0;
-   for (vector<Any>::iterator i = xs.begin(); i != xs.end(); ++i)
-      n = n * 10 + (i->as<char>() - '0');
-   return n;
+   string result;
+   for (char c : in)
+      result += c;
+   return result;
 }
 
-string identR(Vec xs)
+int integerR(vector<Any> xs)
 {
-   string s;
-   for (Vec::iterator i = xs.begin(); i != xs.end(); ++i)
-      s += i->as<char>();
-   return s;
+   istringstream s(stringOfVec(xs));
+   int i;
+   s >> i;
+   return i;
+}
+
+int intOfString(string s)
+{
+   istringstream ss(s);
+   int i;
+   ss >> i;
+   return i;
+}
+
+double doubleOfString(string s)
+{
+   istringstream ss(s);
+   double d;
+   ss >> d;
+   return d;
+}
+
+double doubleR(vector<Any> xs)
+{
+   istringstream s(stringOfVec(xs));
+   double d;
+   s >> d;
+   return d;
+}
+
+Any numberR(Vec in)
+{
+   string mantissaS = stringOfVec(in[0]);
+   if (in[1].typeInfo == tiVec || in[2].typeInfo == tiVec)
+   {
+      int exponent;
+      if (in[2].typeInfo == tiVec)
+      {
+         Vec v = in[2];
+         exponent = intOfString(stringOfVec(v[2]));
+         if (v[1].typeInfo == tiChar && char(v[1]) == '-')
+            exponent = -exponent;
+      }
+      else
+         exponent = 0;
+      if (in[1].typeInfo == tiVec)
+      {
+         string decimalS  = stringOfVec(Vec(in[1])[1]);
+         mantissaS += decimalS;
+         exponent -= decimalS.size();
+      }
+      return doubleOfString(mantissaS) * pow(10, exponent);
+   }
+   else
+      return intOfString(mantissaS);
+}
+
+string identR(Vec v)
+{
+   return stringOfVec(v);
+}
+
+Lambda* lambdaR(Vec in)
+{
+   TypeInfo* type = new TypeInfo();
+   for (string p : Vec(in[0]))
+      type->add(Member(getSymbol(p), tiAny));
+   return new Lambda(type, in[1]);
 }
 
 void parse(Rule* p, string s)
@@ -368,23 +465,25 @@ void parse(Rule* p, string s)
 Rule* expr = new ApplyP();//forward declaration needed to make a loop
 
 Rule* integer    = lexeme(applyP(integerR, many1(new Range('0', '9'))))->setName("integer");
+Rule* number     = lexeme(applyP(numberR , seq(many1(new Range('0', '9')), 
+                                               optional(seq(new Char('.'), many(new Range('0', '9')))), 
+                                               optional(seq(new Char('e'), alt(new Char('+'), new Char('-'), epsilon), many(new Range('0', '9')))))))->setName("number");
 Rule* identifier = lexeme(applyP(identR  , many1(new Range('a', 'z'))))->setName("identifier");
-Rule* lambda     = seq(skip(symbol("\\")), 
-                       many1(identifier), 
-                       skip(symbol("->")), 
-                       expr)
-                   ->setName("lambda");
+Rule* lambda     = applyP(lambdaR, seq(skip(symbol("\\")), 
+                                   many1(identifier), 
+                                   skip(symbol("->")), 
+                                   expr))
+                               ->setName("lambda");
 
 Rule* ifCase     = seq(expr,
-                       symbol("->"),
+                       symbol("then"),
                        expr)
                    ->setName("ifCase");
 
 Rule* ifStat     = seq(symbol("if"), 
-                       new Indent(many1(ifCase), false))
-                   ->setName("ifStat");
+                       new IndentGroup(many1(new IndentItem(ifCase))))->setName("ifStat");
 
-Rule* term       = alt(integer, 
+Rule* term       = alt(number, 
                        identifier, 
                        ifStat, 
                        lambda)
@@ -394,7 +493,7 @@ Rule* terms      = many1(term)->setName("terms");
 
 void initParser2()
 {
-   *expr = *(ApplyP*)chainl(chainl(term, new String("*")), new String("+"))->setName("expr");//and then finish the loop
+   *(ApplyP*)expr = *(ApplyP*)chainl(chainl(term, new String("*")), new String("+"))->setName("expr");//and then finish the loop
    TypeInfo* tiRule        = getTypeAdd<Rule       >();
    TypeInfo* tiAlt         = getTypeAdd<Alt        >();
    TypeInfo* tiSeq         = getTypeAdd<Seq        >();
@@ -402,8 +501,9 @@ void initParser2()
    TypeInfo* tiChar        = getTypeAdd<Char       >();
    TypeInfo* tiRange       = getTypeAdd<Range      >();
    TypeInfo* tiString      = getTypeAdd<String     >();
-   TypeInfo* tiApplyP      = getTypeAdd<ApplyP>();
-   TypeInfo* tiIndent      = getTypeAdd<Indent     >();
+   TypeInfo* tiApplyP      = getTypeAdd<ApplyP     >();
+   TypeInfo* tiIndentGroup = getTypeAdd<IndentGroup>();
+   TypeInfo* tiIndentItem  = getTypeAdd<IndentItem >();
    TypeInfo* tiCheckIndent = getTypeAdd<CheckIndent>();
    addTypeLink(tiRule, tiRange      );
    addTypeLink(tiRule, tiAlt        );
@@ -412,7 +512,8 @@ void initParser2()
    addTypeLink(tiRule, tiChar       );
    addTypeLink(tiRule, tiString     );
    addTypeLink(tiRule, tiApplyP     );
-   addTypeLink(tiRule, tiIndent     );
+   addTypeLink(tiRule, tiIndentGroup);
+   addTypeLink(tiRule, tiIndentItem );
    addTypeLink(tiRule, tiCheckIndent);
    addMember(&Rule  ::name, "name");
    addMember(&Char  ::c   , "c"   );

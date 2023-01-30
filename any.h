@@ -151,6 +151,7 @@ struct TypeInfo
    std::string   fullName;
    int      size;
    void     (*copyCon )(void* res, void* in, TypeInfo* ti);//set in getTypeBase, might be better to leave unset for types with trivial copy constructors
+   void     (*destroy )(void* target);
    Any      (*delegPtr)(Any* fp , Any* params, int np);
 
    Kind     kind;
@@ -277,6 +278,28 @@ struct CopyCon<T[n]>
          CopyCon<T>::go(resT + i, inT + i, ti);
    }
 };
+
+template <class T>
+struct Destroy
+{
+   static void go(void* target)
+   {
+      T* t = static_cast<T*>(target);
+      t->~T();
+   }
+};
+
+template <class T>
+struct Destroy<T&>
+{
+   static void go(void* target)
+   {
+      T** t = static_cast<T**>(target);
+      (*t)->~T();
+   }
+};
+
+
 /*
 getTypeAdd -> getTypeAddStr -> getType -> getTypeBase
 
@@ -307,10 +330,15 @@ TypeInfo getTypeBase()
    typeInfo.size     = sizeof(Type);
    typeInfo.delegPtr = nullptr;
    typeInfo.copyCon  = CopyCon<Type>::go;
+   typeInfo.destroy  = Destroy<Type>::go;
    return typeInfo;
 }
 
-static void gonothing(void* res, void* in, TypeInfo* ti)
+static void copynothing(void* res, void* in, TypeInfo* ti)
+{
+}
+
+static void destroynothing(void*)
 {
 }
 
@@ -335,7 +363,8 @@ struct getType<void>
       typeInfo.fullName = "void";
       typeInfo.size = 0;
       typeInfo.delegPtr = nullptr;
-      typeInfo.copyCon = gonothing;
+      typeInfo.copyCon = copynothing;
+      typeInfo.destroy = destroynothing;
       return typeInfo;
    }
 };
@@ -451,18 +480,19 @@ struct Symbol
    int       group;
    int       id;
 
-   Symbol(std::string name, int group = 0, int id = 0) : name(name), group(group), id(id) {}
+   Symbol(std::string name) : name(name) {}
+   Symbol(std::string name, int group, int id) : name(name), group(group), id(id) {}
 };
 
 struct SymbolCompare
 {
-   bool operator()(const Symbol& LHS, const Symbol& RHS) const
+   bool operator()(const Symbol* LHS, const Symbol* RHS) const
    {
-      return LHS.name < RHS.name;
+      return LHS->name < RHS->name;
    }
 };
 
-typedef std::set<Symbol, SymbolCompare> Symbols;
+typedef std::set<Symbol*, SymbolCompare> Symbols;
 
 extern Symbols symbols;
 
@@ -470,9 +500,11 @@ Symbol* getSymbol(std::string name, int group = 0, int id = 0);
 
 struct Member
 {
+   bool      once;
    bool      cpp;
    TypeInfo* typeInfo;
    Symbol*   symbol;
+   Any       value;
    int       offset;
    Any       ptrToMember;
 #if MEMBERFUNCTIONSEXACT
@@ -612,6 +644,7 @@ Any::operator To&()
       case 3:
          return ****static_cast<To****>(ptr);
    }
+   throw "HUH?";
 }
 #else
 template <class To>
@@ -2119,6 +2152,10 @@ struct Var
 };
 
 struct Frame;
+struct Lambda;
+
+namespace List
+{
 
 struct Closure
 {
@@ -2135,16 +2172,33 @@ struct Closure
 
 Any closureDeleg(Any* closure, Any* params, int np);
 
-template <>
-struct getType<Closure*>
+}
+
+namespace Structure
 {
-   typedef Closure* T;
+   struct Stack
+   {
+      Stack* context;
+   };
+
+   struct Closure
+   {
+      Lambda* lambda;
+      Stack*  context;
+   };
+
+}
+
+template <>
+struct getType<List::Closure*>
+{
+   typedef List::Closure* T;
    static TypeInfo info()
    {
       TypeInfo fti(getTypeBase<T>());
       fti.kind = kPointer;
-      fti.of = getTypeAdd<Closure>();
-      fti.delegPtr = closureDeleg;
+      fti.of = getTypeAdd<List::Closure>();
+      fti.delegPtr = List::closureDeleg;
       return fti;
    }
 };

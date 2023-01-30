@@ -29,6 +29,8 @@ struct State
 {
    Module*  module;
    int      pos;
+   bool     startSingle;
+   bool     startGroup;
    LC       min;
 
    State(Module* module) : module(module), pos(0), min(0, 0) {}
@@ -72,7 +74,6 @@ struct NonTerminal : public Rule
 
 struct Terminal : public Rule
 {
-   //void visit(Visitor* visitor) {}
 };
 
 struct Epsilon : public Terminal
@@ -85,6 +86,8 @@ struct Epsilon : public Terminal
 struct Char : public Terminal
 {
    char c;
+
+   Char(char c);
 
    ParseResult*  parse1(State st);
 };
@@ -116,8 +119,6 @@ struct Alt : public NonTerminal
    Alt(std::vector<Rule*> elems);
 
    ParseResult*  parse1(State st);
-
-   //void visit(Visitor* visitor);
 };
 
 struct Seq : public NonTerminal
@@ -128,19 +129,24 @@ struct Seq : public NonTerminal
    Seq      (std::vector<Rule*> elems);
 
    ParseResult*  parse1(State st);
-
-   //void visit(Visitor* visitor);
 };
 
-struct Indent : public NonTerminal
+struct IndentGroup : public NonTerminal
 {
    Rule*    inner;
-   bool     indentNext;
 
-   Indent   (Rule* inner, bool i) : inner(inner), indentNext(i) {}
+   IndentGroup   (Rule* inner) : inner(inner) {}
 
    ParseResult*  parse1(State st);
-   //        void  visit (Visitor* visitor);
+};
+
+struct IndentItem : public NonTerminal
+{
+   Rule*    inner;
+
+   IndentItem   (Rule* inner) : inner(inner) {}
+
+   ParseResult*  parse1(State st);
 };
 
 struct CheckIndent : public Terminal
@@ -260,10 +266,10 @@ struct Expr;
 struct ParseResult
 {
    State  endS;   //this is needed for parser to work
-   Expr*  ast;
+   Any    ast;
 
    //ParseResult() {}
-   ParseResult(State endS, Expr* ast) : endS(endS), ast(ast) {}
+   ParseResult(State endS, Any ast) : endS(endS), ast(ast) {}
 };
 
 struct Expr
@@ -343,9 +349,10 @@ struct ApplyExpr : public Expr
 
 struct Lambda : public Expr
 {
-   std::vector<std::string> arguments;
-   Expr*                    body;
-   Lambda*                  context;
+   TypeInfo* type;
+   Expr*     body;
+   
+   Lambda(TypeInfo* type, Expr* body) : type(type), body(body) { }
 };
 
 struct Skipped : public Expr
