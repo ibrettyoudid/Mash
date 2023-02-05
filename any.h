@@ -19,25 +19,6 @@ enum LinkKind
    lDelegate //isn't this the same as conversion? yes i think it is
 };
 
-struct TypeLink
-{
-   TypeInfo* base;
-   TypeInfo* derived;
-   LinkKind  kind;
-   int       offset;
-
-   TypeLink(TypeInfo* base, TypeInfo* derived, LinkKind kind, int offset)
-      : base(base), derived(derived), kind(kind), offset(offset) {}
-   /* 
-   for normal inheritance, offset is the position in the derived object of the base object, 
-   under single inheritance it's always 0
-
-   for virtual inheritance,
-   need a link in the derived type to the base
-   need a link in the base to the derived type
-   */
-};
-
 enum Kind
 {
    kNormal = 0,
@@ -62,25 +43,39 @@ struct Symbol;
 
 struct MMBase;
 
+struct LessMemberSymbol
+{
+   typedef void is_transparent;
+   bool operator()(const Member* lhs, const Member* rhs) const;
+   bool operator()(const Member* lhs, Symbol* rhs) const;
+   bool operator()(Symbol* lhs, const Member* rhs) const;
+};
+
 struct LessMemberName
 {
+   typedef void is_transparent;
    bool operator()(const Member* lhs, const Member* rhs) const;
+   bool operator()(const Member* lhs, const std::string& rhs) const;
+   bool operator()(const std::string& lhs, const Member* rhs) const;
 };
 
 struct MemberList
 {
-   std::set  <Member*, LessMemberName> byName;
+   std::set<Member*> byPtr;
+   std::multiset<Member*, LessMemberSymbol> bySymbol;
+   std::multiset<Member*, LessMemberName  > byName;
    std::deque<Member*> byOffset;
 
-   Member* add(Member v);
-   Member* operator[](Member& v);
+   Member* add(Member* v);
+   Member* operator[](Member* v);
    Member* operator[](Symbol* symbol);
    Member* operator[](std::string name);
-   Member* operator[](int n);
-   int     size();
+   Member* operator[](int64_t n);
+   int64_t     size();
+   void    clear();
 };
 
-typedef std::vector<TypeLink*> TypeList;
+struct TypeLink;
 
 extern TypeInfo* tiChar;
 
@@ -108,7 +103,7 @@ struct Any
    Any& operator= (Any&& rhs);
    Any(TypeInfo* typeInfo, void* rhs);
    ~Any();
-   Any call(Any* args, int n);
+   Any call(Any* args, int64_t n);
    Any operator()();
    Any operator()(Any arg0);
    Any operator()(Any arg0, Any arg1);
@@ -123,55 +118,99 @@ struct Any
    operator MMBase& ();
    //---------------------------------------------------------------------------------
    std::string typeName  ();
-   TypeInfo*   paramType (int n);
+   TypeInfo*   paramType (int64_t n, bool useReturnT = false);
    bool        isPtrTo   (TypeInfo* other);
    bool        isRefTo   (TypeInfo* other);
    bool        isPRTF    (TypeInfo* other);
-   int         maxArgs   ();
-   int         minArgs   ();
+   int64_t         maxArgs   ();
+   int64_t         minArgs   ();
    bool        callable  ();
    void        showhex   ();
    std::string hex       ();
-   int         rDepth    ();
-   int         pDepth    ();
-   int         prDepth   ();
-   Any         add       (Member m, Any value);
-   Member*     operator[](Symbol* symbol);
-   Member*     operator[](std::string name);
-   Any         operator[](int n);
+   int64_t         rDepth    ();
+   int64_t         pDepth    ();
+   int64_t         prDepth   ();
+   Any         add       (Member* m, Any value);
+   Any         member    (Member* m);
+   Any         member    (Symbol* symbol);
+   Any         member    (std::string name);
+   Any         member    (int64_t n);
 };
+
+struct TypeLink
+{
+   TypeInfo* base;
+   TypeInfo* derived;
+   LinkKind  kind;
+   int64_t       offset;
+   void*     (*staticUp   )(void*);
+   void*     (*staticDown )(void*);
+   void*     (*dynamicUp  )(void*);
+   void*     (*dynamicDown)(void*);
+
+   TypeLink(TypeInfo* base, TypeInfo* derived, LinkKind kind, int64_t offset)
+      : base(base), derived(derived), kind(kind), offset(offset) {}
+   /* 
+   for normal inheritance, offset is the position in the derived object of the base object, 
+   under single inheritance it's always 0
+
+   for virtual inheritance,
+   need a link in the derived type to the base
+   need a link in the base to the derived type
+   */
+};
+
+typedef std::vector<TypeInfo*> TypeList;
+typedef std::vector<TypeLink*> TypeLinkList;
+
+struct TypePath
+{
+   TypeInfo* base;
+   TypeInfo* derived;
+   LinkKind  kind;
+   int64_t   offsetAll;
+   int64_t   offsetInterp;
+   TypeLinkList  links;
+   TypePath(TypeInfo* base, TypeInfo* derived, LinkKind kind, int64_t offsetAll, int64_t offsetInterp, TypeLinkList links) : base(base), derived(derived), kind(kind), offsetAll(offsetAll), offsetInterp(offsetInterp), links(links) {}
+};
+
+typedef std::multiset<TypePath*> TypePathList;
 
 std::string hex(unsigned char* b, unsigned char* e);
 void showhex(unsigned char* b, unsigned char* e);
 
 struct TypeInfo
 {
-   bool     cpp;
-   std::string   name;
-   std::string   fullName;
-   int      size;
-   void     (*copyCon )(void* res, void* in, TypeInfo* ti);//set in getTypeBase, might be better to leave unset for types with trivial copy constructors
-   void     (*destroy )(void* target);
-   Any      (*delegPtr)(Any* fp , Any* params, int np);
+   std::string      name;
+   int64_t          size;
+   Kind             kind;
+   TypeInfo*        of;
 
-   Kind     kind;
+   MemberList       members;
+   MemberList       allMembers;
+
+   TypeLinkList     bases;
+   TypeLinkList     derived;
+   TypeList         linear;
+   TypePathList     layout;
+
+   void     (*copyCon )(void* res, void* in, TypeInfo* ti);//set in getTypeBase
+   void     (*destroy )(void* target);
+   Any      (*delegPtr)(Any* fp , Any* params, int64_t np);
+
    NKind    nKind;//Signed/unsigned/floating
+
+   bool             cpp;
+   const type_info* cType;
 
    bool     number;
    bool     member;//member function or member pointer (memptrs are callable)
    bool     multimethod;
 
-   int      count;
+   int64_t      count;
+   std::string      fullName;
 
-   TypeInfo*   of;
-
-   MemberList  args;
-
-   std::vector<TypeLink*> bases;
-   std::vector<TypeLink*> derived;
-   std::vector<TypeLink*> linear;
-
-   std::vector<int> ompindices;
+   std::vector<std::vector<int64_t>> mmpindices;
 
    TypeInfo(std::string name = "") : name(name), member(false), multimethod(false), of(nullptr), copyCon(nullptr), kind(kNormal)
    {
@@ -180,9 +219,10 @@ struct TypeInfo
 
    void        doC3Lin   ();
    void        allocate  ();
-   TypeInfo*   argType   (int n);
+   void        allocate2 (TypeInfo* derived, int64_t baseOffset, TypeLinkList& links);
+   TypeInfo*   argType   (int64_t n, bool useReturnT);
    TypeInfo*   unref     ();
-   TypeInfo*   unptr     (int n);
+   TypeInfo*   unptr     (int64_t n);
    TypeInfo*   refTo     ();
    bool        isPtrTo   (TypeInfo* other);
    bool        isRefTo   (TypeInfo* other);
@@ -191,15 +231,12 @@ struct TypeInfo
    std::string getCName  (std::string n = "");
    std::string getName   ();
    TypeInfo*   setName   (std::string s);
-   Member*     add       (Member v);
+   Member*     add       (Member* m);
    Member*     operator[](Symbol* s);
    Member*     operator[](std::string n);
-   Member*     operator[](int n);
+   Member*     operator[](int64_t n);
 };
 
-
-
-void addTypeLink(TypeInfo* base, TypeInfo* derived, LinkKind kind = lSub, int offset = 0);
 bool hasLink(TypeInfo* base, TypeInfo* derived);
 //void addMember(Any member, std::string name);
 
@@ -209,7 +246,7 @@ struct ArgInfo
 {
    TypeInfo* typeInfo;
    std::string   name;
-   int       offset;
+   int64_t       offset;
    Any       defaultVal;
 };
 */
@@ -227,9 +264,33 @@ struct TILess
    }
 };
 
+
+
 typedef std::map<const type_info*, TypeInfo*, TILess> TypeMap;
 extern TypeMap typeMap;
 extern TypeMap typeMapR;
+
+struct TILess2
+{
+   typedef void is_transparent;
+   bool operator()(const TypeInfo* lhs, const TypeInfo* rhs) const
+   {
+      return lhs->cType < rhs->cType;
+   }
+   bool operator()(const type_info* lhs, const TypeInfo* rhs) const
+   {
+      return lhs < rhs->cType;
+   }
+   bool operator()(const TypeInfo* lhs, const type_info* rhs) const
+   {
+      return lhs->cType < rhs;
+   }
+};
+
+typedef std::set<TypeInfo*, TILess2> TypeSet;
+extern TypeSet typeSet;
+extern TypeSet typeSetR;
+
 
 template <class T>
 struct CopyCon
@@ -267,14 +328,14 @@ struct CopyCon<const T>
    }
 };
 
-template <class T, int n>
+template <class T, int64_t n>
 struct CopyCon<T[n]>
 {
    static void go(void* res, void* in, TypeInfo* ti)
    {
       T* resT = static_cast<T*>(res);
       T* inT  = static_cast<T*>(in );
-      for (int i = 0; i < n; ++i)
+      for (size_t i = 0; i < n; ++i)
          CopyCon<T>::go(resT + i, inT + i, ti);
    }
 };
@@ -310,7 +371,7 @@ getType is specialised for
    references     { kind = kReference; of; add & to name; }
    pointers       { kind = kPointer; of }
    pointers to member
-   function types { of; call; kind = kFunction; args; }
+   function types { of; call; kind = kFunction; members; }
    Multimethod    { of; call; }
    Multimethod*
    PartApply*
@@ -325,6 +386,7 @@ TypeInfo getTypeBase()
 {
    TypeInfo typeInfo;
    typeInfo.cpp      = true;
+   typeInfo.cType    = &typeid(Type);
    typeInfo.name     = typeid(Type).name();
    typeInfo.fullName = typeid(Type).name();
    typeInfo.size     = sizeof(Type);
@@ -374,7 +436,7 @@ struct getTypeAddStr
 {
    static TypeInfo* go()
    {
-      TypeInfo*&       ti = typeMap[&typeid(Type)];
+      TypeInfo*&          ti = typeMap[&typeid(Type)];
       if (ti == nullptr)  ti = toObject(getType<Type>::info());
       return ti;
       //return new TypeInfo(getType<X>::info());
@@ -386,7 +448,17 @@ struct getTypeAddStr<Type&>
 {
    static TypeInfo* go()
    {
-      TypeInfo*&       ti = typeMapR[&typeid(Type)];
+      /*
+      auto i = typeSetR.find(&typeid(Type));
+      if (i == typeSetR.end())
+      {  
+         TypeInfo* ti = toObject(getType<Type>::info());
+         typeSetR.insert(ti);
+         return ti;
+      }
+      return *i;
+      */
+      TypeInfo*&          ti = typeMapR[&typeid(Type)];
       if (ti == nullptr)  ti = toObject(getType<Type&>::info());
       return ti;
       //return new TypeInfo(getType<X>::info());
@@ -441,7 +513,7 @@ struct getType<R[]>
    }
 };
 */
-template <class R, int n>
+template <class R, int64_t n>
 struct getType<R[n]>
 {
    typedef R T[n];
@@ -474,14 +546,48 @@ To union_cast(From f)//no good if one has a copy constructor
    return u.t;
 }
 
+template <class From, class To>
+struct StaticCast
+{
+   static void* go(void* from)
+   {
+      return static_cast<To*>(static_cast<From*>(from));
+   }
+};
+
+template <class From, class To>
+struct DynamicCast
+{
+   static void* go(void* from)
+   {
+      return dynamic_cast<To*>(static_cast<From*>(from));
+   }
+};
+
+void addTypeLink(TypeInfo* base, TypeInfo* derived, LinkKind kind = lSub, int64_t offset = 0);
+
+template <class Base, class Derived>
+void addTypeLinkC(LinkKind kind = lSub, int64_t offset = 0)
+{
+   TypeInfo* base    = getTypeAdd<Base   >();
+   TypeInfo* derived = getTypeAdd<Derived>();
+   TypeLink* tl = new TypeLink(base, derived, kind, offset);
+   tl.staticUp    = StaticCast <Derived, Base>::go;
+   tl.staticDown  = StaticCast <Base, Derived>::go;
+   tl.dynamicUp   = DynamicCast<Derived, Base>::go;
+   tl.dynamicDown = DynamicCast<Base, Derived>::go;
+   base->derived.push_back(tl);
+   derived->bases.push_back(tl);
+}
+
 struct Symbol
 {
    std::string    name;
-   int       group;
-   int       id;
+   int64_t       group;
+   int64_t       id;
 
    Symbol(std::string name) : name(name) {}
-   Symbol(std::string name, int group, int id) : name(name), group(group), id(id) {}
+   Symbol(std::string name, int64_t group, int64_t id) : name(name), group(group), id(id) {}
 };
 
 struct SymbolCompare
@@ -496,17 +602,18 @@ typedef std::set<Symbol*, SymbolCompare> Symbols;
 
 extern Symbols symbols;
 
-Symbol* getSymbol(std::string name, int group = 0, int id = 0);
+Symbol* getSymbol(std::string name, int64_t group = 0, int64_t id = 0);
 
 struct Member
 {
-   bool      once;
+   bool      one;
    bool      cpp;
    TypeInfo* typeInfo;
    Symbol*   symbol;
    Any       value;
-   int       offset;
-   Any       ptrToMember;
+   int64_t       offset;
+   Any           ptrToMember;
+   TypeLinkList  links;
 #if MEMBERFUNCTIONSEXACT
    Any       getMemberRef;
    Any       getMember;
@@ -516,8 +623,8 @@ struct Member
    Any       (*getMemberRef)(Member* mem, Any& ca);
    void      (*setMember   )(Member* mem, Any& ca, Any& ra);
 #endif
-   Member(Symbol* symbol, TypeInfo * typeInfo = nullptr, int offset = 0, Any ptrToMember = 0) : symbol(symbol), typeInfo(typeInfo), offset(offset), ptrToMember(ptrToMember) {}
-   Member(TypeInfo* typeInfo) : symbol(nullptr), typeInfo(typeInfo), offset(0), ptrToMember(0) {}
+   Member(Symbol* symbol, TypeInfo * typeInfo = nullptr, int64_t offset = 0, Any ptrToMember = 0) : symbol(symbol), typeInfo(typeInfo), offset(offset), ptrToMember(ptrToMember), one(false) {}
+   Member(TypeInfo* typeInfo) : symbol(nullptr), typeInfo(typeInfo), offset(0), ptrToMember(0), one(false) {}
 };
 
 //required by microsoft vector
@@ -551,6 +658,7 @@ template <class Type> Any(Type* value)
 */
 template <class Type> Any::Any(Type& value, Dynamic)//detect type dynamically using C++ RTTI - takes a reference but creates a plain value
 {
+   //typeInfo = *typeSet.find(&typeid(value));
    typeInfo = typeMap[&typeid(value)];
    ptr = new char[typeInfo->size];
    typeInfo->copyCon(ptr, &value, typeInfo);
@@ -568,8 +676,8 @@ Any::operator To&()
 {
    TypeInfo* toType = getTypeAdd<To>();
    TypeInfo* toType1 = toType;
-   int toRL = 1;//toRL can only be 0 or 1 and it makes no difference to the code required, except that adding more than one level of indirection will be bad
-   int toPL = 0;
+   int64_t toRL = 1;//toRL can only be 0 or 1 and it makes no difference to the code required, except that adding more than one level of indirection will be bad
+   int64_t toPL = 0;
    while (true)
    {
       if (toType->kind == kReference)
@@ -586,8 +694,8 @@ Any::operator To&()
          break;
    }
    TypeInfo* fromType = typeInfo;
-   int fromRL = 0;
-   int fromPL = 0;
+   int64_t fromRL = 0;
+   int64_t fromPL = 0;
    while (true)
    {
       if (fromType->kind == kReference)
@@ -611,7 +719,7 @@ Any::operator To&()
       o << "types unrelated: attempt to cast from " << typeInfo->getName() << " to " << toType1->getName();
       throw std::runtime_error(o.str());
    }
-   int indirs = fromRL + fromPL - toPL;
+   int64_t indirs = fromRL + fromPL - toPL;
    if (indirs < -1)
    {
       std::cout << "cannot add more than 1 indirection: attempt to cast from " << typeInfo->getName() << " to " << toType1->getName() << std::endl;
@@ -652,8 +760,8 @@ Any::operator To ()
 {
    TypeInfo* toType = getTypeAdd<To>();
    TypeInfo* toType1 = toType;
-   int toRL = 1;//toRL can only be 0 or 1 and it makes no difference to the code required, except that adding more than one level of indirection will be bad
-   int toPL = 0;
+   int64_t toRL = 1;//toRL can only be 0 or 1 and it makes no difference to the code required, except that adding more than one level of indirection will be bad
+   int64_t toPL = 0;
    while (true)
    {
       if (toType->kind == kReference)
@@ -670,8 +778,8 @@ Any::operator To ()
          break;
    }
    TypeInfo* fromType = typeInfo;
-   int fromRL = 0;
-   int fromPL = 0;
+   int64_t fromRL = 0;
+   int64_t fromPL = 0;
    while (true)
    {
       if (fromType->kind == kReference)
@@ -695,7 +803,7 @@ Any::operator To ()
       o << "types unrelated: attempt to cast from " << typeInfo->getName() << " to " << toType1->getName();
       throw std::runtime_error(o.str());
    }
-   int indirs = fromRL + fromPL - toPL;
+   int64_t indirs = fromRL + fromPL - toPL;
    if (indirs < -1)
    {
       std::cout << "cannot add more than 1 indirection: attempt to cast from " << typeInfo->getName() << " to " << toType1->getName() << std::endl;
@@ -823,16 +931,16 @@ void addMember(R C::*ptr, std::string name)
    TypeInfo* cti = getTypeAdd<C>();
    TypeInfo* mti = getTypeAdd<R>();
    C* c = nullptr;
-   int offset = reinterpret_cast<long long>(&(c->*ptr));
-   Member m(getSymbol(name), mti, offset, ptr);
-   Member* pm       = cti->args.add(m);
+   int64_t offset = reinterpret_cast<int64_t>(&(c->*ptr));
+   Member* pm = new Member(getSymbol(name), mti, offset, ptr);
+   cti->members.add(pm);
    pm->getMember    = getMember<C, R>;
    pm->getMemberRef = getMemberRef<C, R>;
    pm->setMember    = setMember<C, R>;
 }
 
 template <class R, class C>
-Any delegPtrMem(Any* fp1, Any* params, int n)
+Any delegPtrMem(Any* fp1, Any* params, int64_t n)
 {
    R C::*pm(*fp1);
    std::cout << typeid(pm).name() << std::endl;
@@ -856,7 +964,7 @@ struct getType<R C::*>
       fti.kind   = kPtrMem;
       fti.member = true;
       fti.of  = getTypeAdd<R>();
-      fti.args.add(Member(getSymbol("class"), getTypeAdd<C>()));
+      fti.members.add(new Member(getSymbol("class"), getTypeAdd<C>()));
       fti.delegPtr = delegPtrMem<R, C>;
       return fti;
    }
@@ -864,7 +972,7 @@ struct getType<R C::*>
 
 void addMemberInterp(TypeInfo* _class, std::string name, TypeInfo* type);
 //--------------------------------------------------------------------------- void func()
-Any delegVoid0(Any* fp1, Any* params, int n);
+Any delegVoid0(Any* fp1, Any* params, int64_t n);
 
 //begin AnySpecs
 ///////////////////////////////////////////////////////////////////////////////// FUNCTIONS RETURNING VOID
@@ -882,7 +990,7 @@ struct getType<void (*)()>
 };
 
 template <class A0>
-Any delegVoid1(Any* fp1, Any* params, int n)
+Any delegVoid1(Any* fp1, Any* params, int64_t n)
 {
    void (*fp)(A0) = *fp1;
    fp(params[0]);
@@ -897,13 +1005,13 @@ struct getType<void (*)(A0)>
       TypeInfo fti(getTypeBase<T>());
       fti.kind = kFunction;
       fti.delegPtr = delegVoid1<A0>;
-      fti.args.add(Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
       return fti;
    }
 };
 
 template <class A0, class A1>
-Any delegVoid2(Any* fp1, Any* params, int n)
+Any delegVoid2(Any* fp1, Any* params, int64_t n)
 {
    void (*fp)(A0, A1) = *fp1;
    fp(params[0], params[1]);
@@ -918,14 +1026,14 @@ struct getType<void (*)(A0,A1)>
       TypeInfo fti(getTypeBase<T>());
       fti.kind = kFunction;
       fti.delegPtr = delegVoid2<A0, A1>;
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
       return fti;
    }
 };
 
 template <class A0, class A1, class A2>
-Any delegVoid3(Any* fp1, Any* params, int n)
+Any delegVoid3(Any* fp1, Any* params, int64_t n)
 {
    void (*fp)(A0, A1, A2) = *fp1;
    fp(params[0], params[1], params[2]);
@@ -940,15 +1048,15 @@ struct getType<void (*)(A0,A1,A2)>
       TypeInfo fti(getTypeBase<T>());
       fti.kind = kFunction;
       fti.delegPtr = delegVoid3<A0, A1, A2>;
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
       return fti;
    }
 };
 
 template <class A0, class A1, class A2, class A3>
-Any delegVoid4(Any* fp1, Any* params, int n)
+Any delegVoid4(Any* fp1, Any* params, int64_t n)
 {
    void (*fp)(A0, A1, A2, A3) = *fp1;
    fp(params[0], params[1], params[2], params[3]);
@@ -963,16 +1071,16 @@ struct getType<void (*)(A0,A1,A2,A3)>
       TypeInfo fti(getTypeBase<T>());
       fti.kind = kFunction;
       fti.delegPtr = delegVoid4<A0, A1, A2, A3>;
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
-      fti.args.add(Member(getTypeAdd<A3>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<A3>()));
       return fti;
    }
 };
 
 template <class A0, class A1, class A2, class A3, class A4>
-Any delegVoid5(Any* fp1, Any* params, int n)
+Any delegVoid5(Any* fp1, Any* params, int64_t n)
 {
    void (*fp)(A0, A1, A2, A3, A4) = *fp1;
    fp(params[0], params[1], params[2], params[3], params[4]);
@@ -987,18 +1095,18 @@ struct getType<void (*)(A0,A1,A2,A3,A4)>
       TypeInfo fti(getTypeBase<T>());
       fti.kind = kFunction;
       fti.delegPtr = delegVoid5<A0, A1, A2, A3, A4>;
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
-      fti.args.add(Member(getTypeAdd<A3>()));
-      fti.args.add(Member(getTypeAdd<A4>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<A3>()));
+      fti.members.add(new Member(getTypeAdd<A4>()));
       return fti;
    }
 };
 
 //////////////////////////////////////////////////////////////////////////////// FUNCTIONS
 template <class R>
-Any delegRes0(Any* fp1, Any* params, int n)
+Any delegRes0(Any* fp1, Any* params, int64_t n)
 {
    R (*fp)() = *fp1;
    return fp();
@@ -1018,7 +1126,7 @@ struct getType<R (*)()>
 };
 
 template <class R, class A0>
-Any delegRes1(Any* fp1, Any* params, int n)
+Any delegRes1(Any* fp1, Any* params, int64_t n)
 {
    R (*fp)(A0) = *fp1;
    return fp(params[0]);
@@ -1033,13 +1141,13 @@ struct getType<R (*)(A0)>
       fti.kind   = kFunction;
       fti.of = getTypeAdd<R>();
       fti.delegPtr   = delegRes1<R, A0>;
-      fti.args.add(Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
       return fti;
    }
 };
 
 template <class R, class A0, class A1>
-Any delegRes2(Any* fp1, Any* params, int n)
+Any delegRes2(Any* fp1, Any* params, int64_t n)
 {
    R (*fp)(A0, A1) = *fp1;
    return fp(params[0], params[1]);
@@ -1054,14 +1162,14 @@ struct getType<R (*)(A0,A1)>
       fti.kind   = kFunction;
       fti.of = getTypeAdd<R>();
       fti.delegPtr   = delegRes2<R, A0, A1>;
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
       return fti;
    }
 };
 
 template <class R, class A0, class A1, class A2>
-Any delegRes3(Any* fp1, Any* params, int n)
+Any delegRes3(Any* fp1, Any* params, int64_t n)
 {
    R (*fp)(A0, A1, A2) = *fp1;
    return fp(params[0], params[1], params[2]);
@@ -1076,15 +1184,15 @@ struct getType<R (*)(A0,A1,A2)>
       fti.kind   = kFunction;
       fti.of = getTypeAdd<R>();
       fti.delegPtr   = delegRes3<R, A0, A1, A2>;
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
       return fti;
    }
 };
 
 template <class R, class A0, class A1, class A2, class A3>
-Any delegRes4(Any* fp1, Any* params, int n)
+Any delegRes4(Any* fp1, Any* params, int64_t n)
 {
    R (*fp)(A0, A1, A2, A3) = *fp1;
    return fp(params[0], params[1], params[2], params[3]);
@@ -1099,16 +1207,16 @@ struct getType<R (*)(A0,A1,A2,A3)>
       fti.kind   = kFunction;
       fti.of = getTypeAdd<R>();
       fti.delegPtr   = delegRes4<R, A0, A1, A2, A3>;
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
-      fti.args.add(Member(getTypeAdd<A3>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<A3>()));
       return fti;
    }
 };
 
 template <class R, class A0, class A1, class A2, class A3, class A4>
-Any delegRes5(Any* fp1, Any* params, int n)
+Any delegRes5(Any* fp1, Any* params, int64_t n)
 {
    R (*fp)(A0, A1, A2, A3, A4) = *fp1;
    return fp(params[0], params[1], params[2], params[3], params[4]);
@@ -1123,18 +1231,18 @@ struct getType<R (*)(A0,A1,A2,A3,A4)>
       fti.kind   = kFunction;
       fti.of = getTypeAdd<R>();
       fti.delegPtr   = delegRes5<R, A0, A1, A2, A3, A4>;
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
-      fti.args.add(Member(getTypeAdd<A3>()));
-      fti.args.add(Member(getTypeAdd<A4>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<A3>()));
+      fti.members.add(new Member(getTypeAdd<A4>()));
       return fti;
    }
 };
 
 //////////////////////////////////////////////////////////////////////////////// MEMBER FUNCTIONS RETURNING VOID
 template <class C>
-Any delegVoidClass0(Any* fp1, Any* params, int n)
+Any delegVoidClass0(Any* fp1, Any* params, int64_t n)
 {
    void (C::*fp)() = *fp1;
    (params[0].as<C>().*fp)();
@@ -1149,14 +1257,14 @@ struct getType<void (C::*)()>
       TypeInfo fti(getTypeBase<T>());
       fti.kind   = kFunction;
       fti.delegPtr   = delegVoidClass0<C>;
-      fti.args.add(Member(getTypeAdd<C>()));
+      fti.members.add(new Member(getTypeAdd<C>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class C, class A0>
-Any delegVoidClass1(Any* fp1, Any* params, int n)
+Any delegVoidClass1(Any* fp1, Any* params, int64_t n)
 {
    void (C::*fp)(A0) = *fp1;
    (params[0].as<C>().*fp)(params[1]);
@@ -1171,15 +1279,15 @@ struct getType<void (C::*)(A0)>
       TypeInfo fti(getTypeBase<T>());
       fti.kind   = kFunction;
       fti.delegPtr   = delegVoidClass1<C, A0>;
-      fti.args.add(Member(getTypeAdd<C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class C, class A0, class A1>
-Any delegVoidClass2(Any* fp1, Any* params, int n)
+Any delegVoidClass2(Any* fp1, Any* params, int64_t n)
 {
    void (C::*fp)(A0, A1) = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2]);
@@ -1194,16 +1302,16 @@ struct getType<void (C::*)(A0,A1)>
       TypeInfo fti(getTypeBase<T>());
       fti.kind   = kFunction;
       fti.delegPtr   = delegVoidClass2<C, A0, A1>;
-      fti.args.add(Member(getTypeAdd<C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class C, class A0, class A1, class A2>
-Any delegVoidClass3(Any* fp1, Any* params, int n)
+Any delegVoidClass3(Any* fp1, Any* params, int64_t n)
 {
    void (C::*fp)(A0, A1, A2) = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3]);
@@ -1218,17 +1326,17 @@ struct getType<void (C::*)(A0,A1,A2)>
       TypeInfo fti(getTypeBase<T>());
       fti.kind   = kFunction;
       fti.delegPtr   = delegVoidClass3<C, A0, A1, A2>;
-      fti.args.add(Member(getTypeAdd<C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class C, class A0, class A1, class A2, class A3>
-Any delegVoidClass4(Any* fp1, Any* params, int n)
+Any delegVoidClass4(Any* fp1, Any* params, int64_t n)
 {
    void (C::*fp)(A0, A1, A2, A3) = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4]);
@@ -1243,18 +1351,18 @@ struct getType<void (C::*)(A0,A1,A2,A3)>
       TypeInfo fti(getTypeBase<T>());
       fti.kind   = kFunction;
       fti.delegPtr   = delegVoidClass4<C, A0, A1, A2, A3>;
-      fti.args.add(Member(getTypeAdd<C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
-      fti.args.add(Member(getTypeAdd<A3>()));
+      fti.members.add(new Member(getTypeAdd<C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<A3>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class C, class A0, class A1, class A2, class A3, class A4>
-Any delegVoidClass5(Any* fp1, Any* params, int n)
+Any delegVoidClass5(Any* fp1, Any* params, int64_t n)
 {
    void (C::*fp)(A0, A1, A2, A3, A4) = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4], params[5]);
@@ -1269,12 +1377,12 @@ struct getType<void (C::*)(A0,A1,A2,A3,A4)>
       TypeInfo fti(getTypeBase<T>());
       fti.kind     = kFunction;
       fti.delegPtr = delegVoidClass5<C, A0, A1, A2, A3, A4>;
-      fti.args.add(Member(getTypeAdd<C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
-      fti.args.add(Member(getTypeAdd<A3>()));
-      fti.args.add(Member(getTypeAdd<A4>()));
+      fti.members.add(new Member(getTypeAdd<C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<A3>()));
+      fti.members.add(new Member(getTypeAdd<A4>()));
       fti.member = true;
       return fti;
    }
@@ -1282,7 +1390,7 @@ struct getType<void (C::*)(A0,A1,A2,A3,A4)>
 
 //////////////////////////////////////////////////////////////////////////////// MEMBER FUNCTIONS
 template <class R, class C>
-Any delegResClass0(Any* fp1, Any* params, int n)
+Any delegResClass0(Any* fp1, Any* params, int64_t n)
 {
    R (C::*fp)() = *fp1;
    return (params[0].as<C>().*fp)();
@@ -1297,14 +1405,14 @@ struct getType<R (C::*)()>
       fti.kind     = kFunction;
       fti.of       = getTypeAdd<R>();
       fti.delegPtr = delegResClass0<R, C>;
-      fti.args.add(Member(getTypeAdd<C>()));
+      fti.members.add(new Member(getTypeAdd<C>()));
       fti.member   = true;
       return fti;
    }
 };
 
 template <class R, class C, class A0>
-Any delegResClass1(Any* fp1, Any* params, int n)
+Any delegResClass1(Any* fp1, Any* params, int64_t n)
 {
    R (C::*fp)(A0) = *fp1;
    return (params[0].as<C>().*fp)(params[1]);
@@ -1319,15 +1427,15 @@ struct getType<R (C::*)(A0)>
       fti.kind   = kFunction;
       fti.of = getTypeAdd<R>();
       fti.delegPtr   = delegResClass1<R, C, A0>;
-      fti.args.add(Member(getTypeAdd<C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class R, class C, class A0, class A1>
-Any delegResClass2(Any* fp1, Any* params, int n)
+Any delegResClass2(Any* fp1, Any* params, int64_t n)
 {
    R (C::*fp)(A0, A1) = *fp1;
    return (params[0].as<C>().*fp)(params[1], params[2]);
@@ -1342,16 +1450,16 @@ struct getType<R (C::*)(A0,A1)>
       fti.kind   = kFunction;
       fti.of = getTypeAdd<R>();
       fti.delegPtr   = delegResClass2<R, C, A0, A1>;
-      fti.args.add(Member(getTypeAdd<C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class R, class C, class A0, class A1, class A2>
-Any delegResClass3(Any* fp1, Any* params, int n)
+Any delegResClass3(Any* fp1, Any* params, int64_t n)
 {
    R (C::*fp)(A0, A1, A2) = *fp1;
    return (params[0].as<C>().*fp)(params[1], params[2], params[3]);
@@ -1366,17 +1474,17 @@ struct getType<R (C::*)(A0,A1,A2)>
       fti.kind   = kFunction;
       fti.of = getTypeAdd<R>();
       fti.delegPtr   = delegResClass3<R, C, A0, A1, A2>;
-      fti.args.add(Member(getTypeAdd<C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class R, class C, class A0, class A1, class A2, class A3>
-Any delegResClass4(Any* fp1, Any* params, int n)
+Any delegResClass4(Any* fp1, Any* params, int64_t n)
 {
    R (C::*fp)(A0, A1, A2, A3) = *fp1;
    return (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4]);
@@ -1391,18 +1499,18 @@ struct getType<R (C::*)(A0,A1,A2,A3)>
       fti.kind   = kFunction;
       fti.of = getTypeAdd<R>();
       fti.delegPtr   = delegResClass4<R, C, A0, A1, A2, A3>;
-      fti.args.add(Member(getTypeAdd<C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
-      fti.args.add(Member(getTypeAdd<A3>()));
+      fti.members.add(new Member(getTypeAdd<C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<A3>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class R, class C, class A0, class A1, class A2, class A3, class A4>
-Any delegResClass5(Any* fp1, Any* params, int n)
+Any delegResClass5(Any* fp1, Any* params, int64_t n)
 {
    R (C::*fp)(A0, A1, A2, A3, A4) = *fp1;
    return (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4], params[5]);
@@ -1417,12 +1525,12 @@ struct getType<R (C::*)(A0,A1,A2,A3,A4)>
       fti.kind   = kFunction;
       fti.of = getTypeAdd<R>();
       fti.delegPtr   = delegResClass5<R, C, A0, A1, A2, A3, A4>;
-      fti.args.add(Member(getTypeAdd<C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
-      fti.args.add(Member(getTypeAdd<A3>()));
-      fti.args.add(Member(getTypeAdd<A4>()));
+      fti.members.add(new Member(getTypeAdd<C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<A3>()));
+      fti.members.add(new Member(getTypeAdd<A4>()));
       fti.member = true;
       return fti;
    }
@@ -1430,7 +1538,7 @@ struct getType<R (C::*)(A0,A1,A2,A3,A4)>
 
 //////////////////////////////////////////////////////////////////////////////// CONST MEMBER FUNCTIONS RETURNING VOID
 template <class C>
-Any delegVoidConstClass0(Any* fp1, Any* params, int n)
+Any delegVoidConstClass0(Any* fp1, Any* params, int64_t n)
 {
    void (C::*fp)() const = *fp1;
    (params[0].as<C>().*fp)();
@@ -1445,14 +1553,14 @@ struct getType<void (C::*)() const>
       TypeInfo fti(getTypeBase<T>());
       fti.kind   = kFunction;
       fti.delegPtr   = delegVoidConstClass0<C>;
-      fti.args.add(Member(getTypeAdd<const C>()));
+      fti.members.add(new Member(getTypeAdd<const C>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class C, class A0>
-Any delegVoidConstClass1(Any* fp1, Any* params, int n)
+Any delegVoidConstClass1(Any* fp1, Any* params, int64_t n)
 {
    void (C::*fp)(A0) const = *fp1;
    (params[0].as<C>().*fp)(params[1]);
@@ -1467,15 +1575,15 @@ struct getType<void (C::*)(A0) const>
       TypeInfo fti(getTypeBase<T>());
       fti.kind   = kFunction;
       fti.delegPtr   = delegVoidConstClass1<C, A0>;
-      fti.args.add(Member(getTypeAdd<const C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<const C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class C, class A0, class A1>
-Any delegVoidConstClass2(Any* fp1, Any* params, int n)
+Any delegVoidConstClass2(Any* fp1, Any* params, int64_t n)
 {
    void (C::*fp)(A0, A1) const = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2]);
@@ -1490,16 +1598,16 @@ struct getType<void (C::*)(A0,A1) const>
       TypeInfo fti(getTypeBase<T>());
       fti.kind   = kFunction;
       fti.delegPtr   = delegVoidConstClass2<C, A0, A1>;
-      fti.args.add(Member(getTypeAdd<const C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<const C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class C, class A0, class A1, class A2>
-Any delegVoidConstClass3(Any* fp1, Any* params, int n)
+Any delegVoidConstClass3(Any* fp1, Any* params, int64_t n)
 {
    void (C::*fp)(A0, A1, A2) const = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3]);
@@ -1514,17 +1622,17 @@ struct getType<void (C::*)(A0,A1,A2) const>
       TypeInfo fti(getTypeBase<T>());
       fti.kind   = kFunction;
       fti.delegPtr   = delegVoidConstClass3<C, A0, A1, A2>;
-      fti.args.add(Member(getTypeAdd<const C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<const C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class C, class A0, class A1, class A2, class A3>
-Any delegVoidConstClass4(Any* fp1, Any* params, int n)
+Any delegVoidConstClass4(Any* fp1, Any* params, int64_t n)
 {
    void (C::*fp)(A0, A1, A2, A3) const = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4]);
@@ -1539,18 +1647,18 @@ struct getType<void (C::*)(A0,A1,A2,A3) const>
       TypeInfo fti(getTypeBase<T>());
       fti.kind   = kFunction;
       fti.delegPtr   = delegVoidConstClass4<C, A0, A1, A2, A3>;
-      fti.args.add(Member(getTypeAdd<const C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
-      fti.args.add(Member(getTypeAdd<A3>()));
+      fti.members.add(new Member(getTypeAdd<const C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<A3>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class C, class A0, class A1, class A2, class A3, class A4>
-Any delegVoidConstClass5(Any* fp1, Any* params, int n)
+Any delegVoidConstClass5(Any* fp1, Any* params, int64_t n)
 {
    void (C::*fp)(A0, A1, A2, A3, A4) const = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4], params[5]);
@@ -1565,12 +1673,12 @@ struct getType<void (C::*)(A0,A1,A2,A3,A4) const>
       TypeInfo fti(getTypeBase<T>());
       fti.kind   = kFunction;
       fti.delegPtr   = delegVoidConstClass5<C, A0, A1, A2, A3, A4>;
-      fti.args.add(Member(getTypeAdd<const C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
-      fti.args.add(Member(getTypeAdd<A3>()));
-      fti.args.add(Member(getTypeAdd<A4>()));
+      fti.members.add(new Member(getTypeAdd<const C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<A3>()));
+      fti.members.add(new Member(getTypeAdd<A4>()));
       fti.member = true;
       return fti;
    }
@@ -1578,7 +1686,7 @@ struct getType<void (C::*)(A0,A1,A2,A3,A4) const>
 
 //////////////////////////////////////////////////////////////////////////////// CONST MEMBER FUNCTIONS
 template <class R, class C>
-Any delegResConstClass0(Any* fp1, Any* params, int n)
+Any delegResConstClass0(Any* fp1, Any* params, int64_t n)
 {
    R (C::*fp)() const = *fp1;
    return (params[0].as<C>().*fp)();
@@ -1593,14 +1701,14 @@ struct getType<R (C::*)() const>
       fti.kind   = kFunction;
       fti.of = getTypeAdd<R>();
       fti.delegPtr   = delegResConstClass0<R, C>;
-      fti.args.add(Member(getTypeAdd<const C>()));
+      fti.members.add(new Member(getTypeAdd<const C>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class R, class C, class A0>
-Any delegResConstClass1(Any* fp1, Any* params, int n)
+Any delegResConstClass1(Any* fp1, Any* params, int64_t n)
 {
    R (C::*fp)(A0) const = *fp1;
    return (params[0].as<C>().*fp)(params[1]);
@@ -1615,15 +1723,15 @@ struct getType<R (C::*)(A0) const>
       fti.kind   = kFunction;
       fti.of = getTypeAdd<R>();
       fti.delegPtr   = delegResConstClass1<R, C, A0>;
-      fti.args.add(Member(getTypeAdd<const C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<const C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class R, class C, class A0, class A1>
-Any delegResConstClass2(Any* fp1, Any* params, int n)
+Any delegResConstClass2(Any* fp1, Any* params, int64_t n)
 {
    R (C::*fp)(A0, A1) const = *fp1;
    return (params[0].as<C>().*fp)(params[1], params[2]);
@@ -1638,16 +1746,16 @@ struct getType<R (C::*)(A0,A1) const>
       fti.kind   = kFunction;
       fti.of = getTypeAdd<R>();
       fti.delegPtr   = delegResConstClass2<R, C, A0, A1>;
-      fti.args.add(Member(getTypeAdd<const C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<const C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class R, class C, class A0, class A1, class A2>
-Any delegResConstClass3(Any* fp1, Any* params, int n)
+Any delegResConstClass3(Any* fp1, Any* params, int64_t n)
 {
    R (C::*fp)(A0, A1, A2) const = *fp1;
    return (params[0].as<C>().*fp)(params[1], params[2], params[3]);
@@ -1662,17 +1770,17 @@ struct getType<R (C::*)(A0,A1,A2) const>
       fti.kind   = kFunction;
       fti.of = getTypeAdd<R>();
       fti.delegPtr   = delegResConstClass3<R, C, A0, A1, A2>;
-      fti.args.add(Member(getTypeAdd<const C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<const C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class R, class C, class A0, class A1, class A2, class A3>
-Any delegResConstClass4(Any* fp1, Any* params, int n)
+Any delegResConstClass4(Any* fp1, Any* params, int64_t n)
 {
    R (C::*fp)(A0, A1, A2, A3) const = *fp1;
    return (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4]);
@@ -1687,18 +1795,18 @@ struct getType<R (C::*)(A0,A1,A2,A3) const>
       fti.kind   = kFunction;
       fti.of = getTypeAdd<R>();
       fti.delegPtr   = delegResConstClass4<R, C, A0, A1, A2, A3>;
-      fti.args.add(Member(getTypeAdd<const C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
-      fti.args.add(Member(getTypeAdd<A3>()));
+      fti.members.add(new Member(getTypeAdd<const C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<A3>()));
       fti.member = true;
       return fti;
    }
 };
 
 template <class R, class C, class A0, class A1, class A2, class A3, class A4>
-Any delegResConstClass5(Any* fp1, Any* params, int n)
+Any delegResConstClass5(Any* fp1, Any* params, int64_t n)
 {
    R (C::*fp)(A0, A1, A2, A3, A4) const = *fp1;
    return (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4], params[5]);
@@ -1713,12 +1821,12 @@ struct getType<R (C::*)(A0,A1,A2,A3,A4) const>
       fti.kind   = kFunction;
       fti.of = getTypeAdd<R>();
       fti.delegPtr   = delegResConstClass5<R, C, A0, A1, A2, A3, A4>;
-      fti.args.add(Member(getTypeAdd<const C>()));
-      fti.args.add(Member(getTypeAdd<A0>()));
-      fti.args.add(Member(getTypeAdd<A1>()));
-      fti.args.add(Member(getTypeAdd<A2>()));
-      fti.args.add(Member(getTypeAdd<A3>()));
-      fti.args.add(Member(getTypeAdd<A4>()));
+      fti.members.add(new Member(getTypeAdd<const C>()));
+      fti.members.add(new Member(getTypeAdd<A0>()));
+      fti.members.add(new Member(getTypeAdd<A1>()));
+      fti.members.add(new Member(getTypeAdd<A2>()));
+      fti.members.add(new Member(getTypeAdd<A3>()));
+      fti.members.add(new Member(getTypeAdd<A4>()));
       fti.member = true;
       return fti;
    }
@@ -1729,34 +1837,34 @@ struct getType<R (C::*)(A0,A1,A2,A3,A4) const>
 template <class T>
 struct Array
 {
-   int         dimensions;
-   std::vector<int> sizes;
+   int64_t         dimensions;
+   std::vector<int64_t> sizes;
    T*          mem;
-   int         totalSize;
+   int64_t         totalSize;
    Array() : mem(nullptr)
    {
    }
-   Array(int dim) : dimensions(dim), sizes(dim), mem(nullptr)
+   Array(int64_t dim) : dimensions(dim), sizes(dim), mem(nullptr)
    {
    }
-   T* alloc()
+   void alloc()
    {
       clear();
       totalSize = 1;
       dimensions = sizes.size();
-      for (int d = 0; d < dimensions; ++d)
+      for (size_t d = 0; d < dimensions; ++d)
          totalSize *= sizes[d];
       mem = new T[totalSize];
    }
-   Array(std::vector<int> sizes) : sizes(sizes), mem(nullptr)
+   Array(std::vector<int64_t> sizes) : sizes(sizes), mem(nullptr)
    {
       alloc();
    }
-   T& operator[](std::vector<int> p)
+   T& operator[](std::vector<int64_t> p)
    {
       T* addr = mem;
-      int mult = 1;
-      for (int d = 0; d < dimensions; ++d)
+      int64_t mult = 1;
+      for (size_t d = 0; d < dimensions; ++d)
       {
          addr += p[d] * mult;
          mult *= sizes[d];
@@ -1765,25 +1873,26 @@ struct Array
    }
    void clear()
    {
-      if (mem) delete[] mem;
+      delete[] mem;
       mem = nullptr;
    }
 };
 
 struct MMBase
 {
-   int         minArgs;
-   int         maxArgs;
-   bool        empty;
+   int64_t          minArgs;
+   int64_t          maxArgs;
+   bool             useReturnT;
+   bool             useTable;
    std::vector<Any> methods;
-   std::string     name;
-   Array<Any>  table;
+   std::string      name;
+   Array<Any>       table;
    std::vector<std::set<TypeInfo*>> paramTypes;
-   int         omindex;
-   static int  omcount;
+   int64_t          mmindex;
+   static int64_t   mmcount;
    static std::set<MMBase*> mms;
 
-   MMBase(std::string _name = "") : name(_name), empty(true), minArgs(0), maxArgs(0), omindex(omcount++)
+   MMBase(std::string _name = "") : name(_name), useReturnT(false), useTable(false), minArgs(0), maxArgs(0), mmindex(mmcount++)
    {
       mms.insert(this);
    }
@@ -1802,67 +1911,70 @@ struct Multimethod : public MMBase
    void add(Any method)
    {
       TypeInfo* ti = method.typeInfo;
-      if (empty || method.maxArgs() > maxArgs) maxArgs = method.maxArgs();
-      if (empty || method.minArgs() < minArgs) minArgs = method.minArgs();
-      empty = false;
+      int64_t methodMaxArgs = method.maxArgs() + (useReturnT ? 1 : 0);
+      int64_t methodMinArgs = method.minArgs() + (useReturnT ? 1 : 0);
+      if (methods.size() == 0 || methodMaxArgs > maxArgs) maxArgs = methodMaxArgs;
+      if (methods.size() == 0 || methodMinArgs < minArgs) minArgs = methodMinArgs;
       methods.push_back(method);
    }
-   Result call(Any* args, int nargs)
+   Result call(Any* args, int64_t nargs)
    {
-#if 0
-      for (int mi = 0; mi < (int)methods.size(); ++mi)
+      if (useTable)
+         return callT(args, nargs);
+      else
       {
-         for (int ai = 0; ai < nargs; ++ai)
+#define DEBUGMM
+#ifdef DEBUGMM
+         std::cerr << "MULTIMETHOD " << name << " CALLED WITH: ";
+         for (size_t ai = 0; ai < nargs; ++ai)
+            std::cerr << args[ai].typeName() << "   ";
+         std::cerr << std::endl;
+#endif   
+         for (size_t mi = 0; mi < methods.size(); ++mi)
          {
-            TypeInfo* at  = args[ai].typeInfo;
-            TypeInfo* mat = methods[mi].argType(ai);
-            if (mat->name == "int")
-               bool stop = true;
-            if (mat != tiAny && !at->isPRTF(mat))
-               goto nextMethod;
-         }
-         return methods[mi].call(args, nargs).as<Result>();
-nextMethod:;
-      }
-#endif
-#if 1
 #ifdef DEBUGMM
-      std::cout << name << " CALLED WITH: ";
-      for (int ai = 0; ai < nargs; ++ai)
-         std::cout << args[ai].typeName() << "   ";
-      std::cout << std::endl;
+            std::cerr << "trying: ";
+            for (size_t ai = 0; ai < nargs; ++ai)
+               std::cerr << methods[mi].paramType(ai)->getName() << "   ";
+            std::cerr << std::endl;
 #endif
-      for (int mi = 0; mi < (int)methods.size(); ++mi)
-      {
-#ifdef DEBUGMM
-         std::cout << "trying: ";
-         for (int ai = 0; ai < nargs; ++ai)
-            cout << methods[mi].typeInfo->args[ai]->name << "   ";
-         cout << endl;
-#endif
-         for (int ai = 0; ai < nargs; ++ai)
-         {
-            TypeInfo* at  = args[ai].typeInfo;
-            TypeInfo* pt = methods[mi].paramType(ai);
-#ifdef DEBUGMM
-            std::cout << mat->name << "   ";
-#endif
-            if (!(pt == tiAny || at->isPRTF(pt)))
+            for (size_t ai = 0; ai < nargs; ++ai)
             {
-#ifdef DEBUGMM
-               std::cout << " FAIL arg = " << at->name << std::endl;
-#endif
-               goto nextMethod2;
+               TypeInfo* fromt;
+               TypeInfo* tot;
+               if (useReturnT)
+               {
+                  if (ai == 0) tot = args[ai];
+                  else         tot = args[ai].typeInfo;
+                  fromt = methods[mi].paramType(ai - 1);
+               }
+               else
+               {
+                  fromt = args[ai].typeInfo;
+                  tot = methods[mi].paramType(ai);
+               }
+               #ifdef DEBUGMM
+               std::cerr << tot->name << "   ";
+               #endif
+               if (!(tot == tiAny || fromt->isPRTF(tot)))
+               {
+                  #ifdef DEBUGMM
+                  std::cerr << " FAIL arg = " << fromt->getName() << std::endl;
+                  #endif
+                  goto nextMethod2;
+               }
             }
+            #ifdef DEBUGMM
+            std::cerr << std::endl << " *** MATCH ***" << std::endl;
+            #endif
+            if (useReturnT)
+               return methods[mi].call(args+1, nargs-1).as<Result>();
+            else
+               return methods[mi].call(args, nargs).as<Result>();
+   nextMethod2:;
          }
-#ifdef DEBUGMM
-         std::cout << std::endl << " *** MATCH ***" << std::endl;
-#endif
-         return methods[mi].call(args, nargs).as<Result>();
-nextMethod2:;
+         throw "multimethod not applicable to type(s)";
       }
-#endif
-      throw "multimethod not applicable to type";
    }
    Result operator()(Any arg0)
    {
@@ -1878,11 +1990,35 @@ nextMethod2:;
       Any args[3] = { arg0, arg1, arg2 };
       return call(args, 3);
    }
-   void insertParamType(int pi, TypeInfo* t)
+   Result callT(Any* args, int64_t nargs)
+   {
+      std::vector<int64_t> indices(maxArgs);
+      if (useReturnT)
+      {
+         indices[0] = args[0].as<TypeInfo*>()->mmpindices[mmindex][0];
+         for (int64_t ai = 1; ai < nargs; ++ai)
+            indices[ai] = args[ai].typeInfo->mmpindices[mmindex][ai];
+         return table[indices].call(args+1, nargs-1);
+      }
+      else
+      {
+         for (int64_t ai = 0; ai < nargs; ++ai)
+            indices[ai] = args[ai].typeInfo->mmpindices[mmindex][ai];
+         return table[indices].call(args, nargs);
+      }
+   }
+   void insertParamType(int64_t pi, TypeInfo* t)
    {
       if (paramTypes[pi].insert(t).second)
-         for (auto d : t->derived)
-            insertParamType(pi, d->derived);
+      { 
+         if (t->mmpindices.size() <= mmindex)
+            t->mmpindices.resize(mmindex + 1);
+         if (t->mmpindices[mmindex].size() <= pi)
+            t->mmpindices[mmindex].resize(pi + 1);
+         t->mmpindices[mmindex][pi] = paramTypes[pi].size() - 1;
+         //for (auto d : t->derived)
+         //   insertParamType(pi, d->derived);
+      }
    }
    void buildTable()
    {
@@ -1890,11 +2026,11 @@ nextMethod2:;
       paramTypes.clear();
       paramTypes.resize(maxArgs);
       for (auto &m : methods)
-         for (int pi = 0; pi < m.typeInfo->args.size(); ++pi)
-            insertParamType(pi, m.typeInfo->args[pi]->typeInfo);
+         for (size_t pi = 0; pi < m.typeInfo->members.size() + useReturnT; ++pi)
+            insertParamType(pi, m.paramType(pi, useReturnT));
 
       table.sizes.resize(maxArgs);
-      for (int pi = 0; pi < maxArgs; ++ pi)
+      for (size_t pi = 0; pi < maxArgs; ++ pi)
          table.sizes[pi] = paramTypes[pi].size();
       table.alloc();
       std::vector<Any*> validMethods;
@@ -1902,7 +2038,7 @@ nextMethod2:;
       std::vector<TypeInfo*> at(maxArgs);
       simulate(validMethods, at, 0);
    }
-   void simulate(std::vector<Any*> &validMethods, std::vector<TypeInfo*> &at, int ai)
+   void simulate(std::vector<Any*> &validMethods, std::vector<TypeInfo*> &at, int64_t ai)
    {
 #if 1
       //step 1
@@ -1913,7 +2049,7 @@ nextMethod2:;
             std::vector<Any*> validMethodsNew;
             at[ai] = at1;
             for (auto m : validMethods)
-               if (hasLink(m->typeInfo->args[ai]->typeInfo, at1))
+               if (hasLink(m->paramType(ai, useReturnT), at1))
                   validMethodsNew.push_back(m);
             simulate(validMethodsNew, at, ai + 1);
          }
@@ -1925,10 +2061,10 @@ nextMethod2:;
          std::vector<Any*> bestMethods(validMethods);
          std::vector<std::set<TypeInfo*>> validParamTypes(maxArgs);
          //get all the param types of the VALID methods
-         for (int ai2 = 0; ai2 < maxArgs; ++ai2)
+         for (size_t ai2 = 0; ai2 < maxArgs; ++ai2)
             for (auto m : validMethods)
-               validParamTypes[ai2].insert(m->typeInfo->args[ai2]->typeInfo);
-         for (int ai2 = 0; ai2 < maxArgs; ++ai2)
+               validParamTypes[ai2].insert(m->paramType(ai2, useReturnT));
+         for (size_t ai2 = 0; ai2 < maxArgs; ++ai2)
          {
             auto atlb = at[ai2]->linear.begin();//atl = argument type linearisation
             auto atle = at[ai2]->linear.end();
@@ -1943,21 +2079,24 @@ nextMethod2:;
                   ptmin = pt;
                }
             }
-            if (!ptmin) throw std::runtime_error("Algorithm failure in multimethod::simulate - parameter type found in step 1 has disappeared in step 2");
+            if (!ptmin) throw std::runtime_error("Algorithm failure in multimethod::simulate - parameter type found in step 1 has seemingly disappeared in step 2");
             std::vector<Any*> bestMethodsNew;
             for (auto m : bestMethods)
-               if (m->typeInfo->args[ai2]->typeInfo == ptmin)
+               if (m->paramType(ai2, useReturnT) == ptmin)
                   bestMethodsNew.push_back(m);
             bestMethods = std::move(bestMethodsNew);
          }
          if (bestMethods.size() == 1)
          {
-            table[at] = bestMethods.front();
+            std::vector<int64_t> ati(maxArgs);
+            for (int64_t ai2 = 0; ai2 < maxArgs; ++ai2)
+               ati[ai2] = at[ai2]->mmpindices[mmindex][ai2];
+            table[ati] = *bestMethods.front();
          }
          else if (bestMethods.size() == 0)
          {
             std::cout << "warning: no best method in multimethod " << name << " for argument types ";
-            for (int ai2 = 0; ai2 < maxArgs; ++ai2)
+            for (size_t ai2 = 0; ai2 < maxArgs; ++ai2)
                std::cout << at[ai2]->getName() << "  ";
             std::cout << std::endl;
          }
@@ -1995,15 +2134,15 @@ nextMethod2:;
 *        use linearisation to decide?
 *        how do we detect this?
 *
-* can initialise a const int with an int
-* cannot assign to a const int with anything
+* can initialise a const int64_t with an int64_t
+* cannot assign to a const int64_t with anything
 * 
 *                           can assign this
-*  to this         |int *|const int *|int * const|const int * const|
-*       int *      |ia   |           |ia         |
-* const int *      |
-*       int * const|
-* const int * const|
+*  to this         |int64_t *|const int64_t *|int64_t * const|const int64_t * const|
+*       int64_t *      |ia   |           |ia         |
+* const int64_t *      |
+*       int64_t * const|
+* const int64_t * const|
 */
 #if 1
 template <>
@@ -2012,7 +2151,7 @@ struct Multimethod<void> : public Multimethod<Any>
    Multimethod(std::string _name = "") : Multimethod<Any>(_name)
    {
    }
-   void call(Any* args, int nargs)
+   void call(Any* args, int64_t nargs)
    {
       Multimethod<Any>::call(args, nargs);
    }
@@ -2035,7 +2174,7 @@ struct Multimethod<void> : public Multimethod<Any>
 typedef Multimethod<Any> MultimethodAny;
 
 template <class R>
-Any delegMM(Any* mm, Any* args, int n)
+Any delegMM(Any* mm, Any* args, int64_t n)
 {
    return mm->as<Multimethod<R> >().call(args, n);
 }
@@ -2048,15 +2187,15 @@ struct getType<Multimethod<R> >
       TypeInfo fti(getTypeBase<Multimethod<R> >());
       fti.multimethod = true;
       fti.of = getTypeAdd<R>();
-      //for (int i = 0; i < mm.nargs; ++i)
-      //   fti.args.add(getTypeAdd<Any>());
+      //for (size_t i = 0; i < mm.nargs; ++i)
+      //   fti.members.add(getTypeAdd<Any>());
       fti.delegPtr = delegMM<R>;
       return fti;
    }
 };
 
 template <class R>
-Any delegMMP(Any* mm, Any* args, int n)
+Any delegMMP(Any* mm, Any* args, int64_t n)
 {
    return mm->as<Multimethod<R>*>()->call(args, n);
 }
@@ -2069,8 +2208,8 @@ struct getType<Multimethod<R>*>
       TypeInfo fti(getTypeBase<Multimethod<R>*>());
       fti.multimethod = true;
       fti.of = getTypeAdd<R>();
-      //for (int i = 0; i < mm.nargs; ++i)
-      //   fti.args.add(getTypeAdd<Any>());
+      //for (size_t i = 0; i < mm.nargs; ++i)
+      //   fti.members.add(getTypeAdd<Any>());
       fti.delegPtr = delegMMP<R>;
       fti.kind = kPointer;
       fti.of = getTypeAdd<Multimethod<R> >();
@@ -2089,15 +2228,15 @@ extern MissingArg mA;
 
 struct PartApply
 {
-   int pArgsFixed;
+   int64_t pArgsFixed;
    std::vector<Any> argsFixed;
-   Any      (*delegPtr)(Any* fp , Any* params, int np);
+   Any      (*delegPtr)(Any* fp , Any* params, int64_t np);
 };
 
 PartApply* makePartApply(Any f, Any a0);
 PartApply* makePartApply(Any f, Any a0, Any a1);
 
-Any delegPartApply(Any* cl, Any* args, int n);
+Any delegPartApply(Any* cl, Any* args, int64_t n);
 
 template <>
 struct getType<PartApply*>
@@ -2106,8 +2245,8 @@ struct getType<PartApply*>
    {
       TypeInfo fti(getTypeBase<PartApply*>());
       //fti.of = getTypeAdd<R>();
-      //for (int i = 0; i < mm.nargs; ++i)
-      //   fti.args.add(getTypeAdd<Any>());
+      //for (size_t i = 0; i < mm.nargs; ++i)
+      //   fti.members.add(getTypeAdd<Any>());
       fti.delegPtr = delegPartApply;
       fti.kind = kPointer;
       fti.of = getTypeAdd<PartApply>();
@@ -2115,19 +2254,19 @@ struct getType<PartApply*>
    }
 };
 
-typedef Any (*VFAux)(Any*, int);
+typedef Any (*VFAux)(Any*, int64_t);
 
 struct VarFunc
 {
-   int         minArgs;
-   int         maxArgs;
+   int64_t         minArgs;
+   int64_t         maxArgs;
    Any         func;
-   VarFunc(Any func, int minArgs, int maxArgs) : func(func), minArgs(minArgs), maxArgs(maxArgs)
+   VarFunc(Any func, int64_t minArgs, int64_t maxArgs) : func(func), minArgs(minArgs), maxArgs(maxArgs)
    {
    }
 };
 
-Any delegVF(Any* fp, Any* args, int n);
+Any delegVF(Any* fp, Any* args, int64_t n);
 
 template <>
 struct getType<VarFunc>
@@ -2145,7 +2284,7 @@ struct Var
 {
    std::string   name;
    Any      value;
-   int      offset;
+   int64_t      offset;
    Var(                           ) :                           offset(0) {}
    Var(std::string name           ) : name(name),               offset(0) {}
    Var(std::string name, Any value) : name(name), value(value), offset(0) {}
@@ -2163,14 +2302,14 @@ struct Closure
    Var         rest;
    Any         body;
    Frame*      context;
-   int         minArgs;
-   int         maxArgs;
+   int64_t         minArgs;
+   int64_t         maxArgs;
 
    Closure() : context(nullptr), minArgs(0), maxArgs(0) {}
    Closure(Any params, Any body, Frame* context = nullptr);
 };
 
-Any closureDeleg(Any* closure, Any* params, int np);
+Any closureDeleg(Any* closure, Any* params, int64_t np);
 
 }
 

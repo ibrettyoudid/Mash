@@ -13,7 +13,7 @@ typedef wchar_t TCHAR;
 
 typedef const TCHAR* iter;
 struct TState;
-typedef int TPos;
+typedef int64_t TPos;
 struct LexFile
 {
    std::string   name;
@@ -30,8 +30,8 @@ struct LexFileRef
 {
    LexFile*     file;
    iter         p;
-   int         lineNo;
-   LexFileRef(LexFile* file, iter p, int _lineNo) : file(file), p(p), lineNo(_lineNo) {}
+   int64_t         lineNo;
+   LexFileRef(LexFile* file, iter p, int64_t _lineNo) : file(file), p(p), lineNo(_lineNo) {}
 };
 
 struct Lex      : public Symbol
@@ -95,10 +95,10 @@ enum AssocType { atLeft, atRight };
 struct OpFix : public SymbolData
 {
    FixType     fix;
-   int         prec;
+   int64_t         prec;
    AssocType   assoc;
    std::string      other;
-               OpFix   (std::string   _name, std::string _other = "", FixType _fix = ftIn, AssocType _assoc = atLeft, int _prec = 0, int id = 0)
+               OpFix   (std::string   _name, std::string _other = "", FixType _fix = ftIn, AssocType _assoc = atLeft, int64_t _prec = 0, int64_t id = 0)
                            : SymbolData(_name, id), other(_other), fix(_fix), assoc(_assoc), prec(_prec) {}
    struct Compare
    {
@@ -122,7 +122,7 @@ struct OpFix : public SymbolData
          return false;
       }
       //this requires UNSORTED SEARCH: findxu
-      bool operator()(const OpFix* LHS, int id) const
+      bool operator()(const OpFix* LHS, int64_t id) const
       {
          if (LHS->id < id) return true;
          if (LHS->id > id) return false;
@@ -160,7 +160,7 @@ struct Op : public SymbolData
          return name < rhs->name;
       }
       //this requires UNSORTED SEARCH: findxu
-      int operator()(const OpFix* LHS, int id) const
+      int64_t operator()(const OpFix* LHS, int64_t id) const
       {
          if (LHS->id < id) return -1;
          if (LHS->id > id) return  1;
@@ -194,14 +194,14 @@ struct Parser
    iter        p;
    iter        e;
    iter        lineStart;
-   int         lineNo;
-   int         savedStates;
+   int64_t         lineNo;
+   int64_t         savedStates;
    bool        parseEnd;
    bool        prep;
    bool        include;
-   int         tentative;
-   int         errors;
-   int         lastError;
+   int64_t         tentative;
+   int64_t         errors;
+   int64_t         lastError;
    Language*   lang;
 
    Parser() : savedStates(0), tentative(0) {}
@@ -213,23 +213,23 @@ struct Parser
    virtual Parser*  popFile           ();
    virtual Op*      AsOp              (Any V);
    virtual Any      parseExprPrimary  ();
-   virtual Any      parseExpr         (int minPrec = 0);
+   virtual Any      parseExpr         (int64_t minPrec = 0);
    virtual Any      parseSExpr        ();
    virtual Any      parseList         ();
    virtual Any      parseError        (Any t, std::string err);
    virtual std::string   nextStr           ();
-   virtual Any      nextToken         (int N = 0);
+   virtual Any      nextToken         (int64_t N = 0);
    virtual void     putToken          ();
    virtual Any      getTokenCheck     (std::string Text);
    virtual Any      getTokenNoCheck   (std::string Text);
    virtual Any      getToken          (bool space = false);
-   virtual void     ensure            (int n);
+   virtual void     ensure            (int64_t n);
    virtual Any      getToken2         ();
    virtual Any      setFilePos              (Any v, iter b);
    virtual Any      getToken3         ();
    virtual void     loadState         (TState State);
 //                     Parser            () : NextToken(MakeProp(&GetNextToken)), NextStr(MakeProp(&GetNextStr)), NextType(MakeProp(&GetNextType)) {}
-   virtual  int      getLineNo         ();
+   virtual  int64_t      getLineNo         ();
 /*
    template <class T> T DCastError        (TObj* Obj)
    {
@@ -253,7 +253,7 @@ struct Parser
 struct TState
 {
    Parser*     parser;
-   int         nDone;
+   int64_t         nDone;
    TState() : parser(nullptr), nDone(0)
    {
    }
@@ -293,7 +293,7 @@ bool iswhite(char C);
 bool isline(char C);
 bool iswsnl(char C);
 /*
-int operator<(const Op* LHS, const Op* rhs)
+int64_t operator<(const Op* LHS, const Op* rhs)
 {
    if (LHS->name < rhs->name) return -1;
    if (LHS->name > rhs->name) return 1;
@@ -328,7 +328,7 @@ struct Haskell : public Language
    Haskell();
 };
 
-enum class Keyword : int
+enum class Keyword : int64_t
 {
    list,
    _if,

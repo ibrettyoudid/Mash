@@ -679,13 +679,13 @@ std::ostream& operator<<(std::ostream& strm, std::vector<T>& value)
 
 
 
-void make(int n)
+void make(int64_t n)
 {
-   for (int i = 1; i <= n; ++i)
+   for (int64_t i = 1; i <= n; ++i)
    {
       std::cout << "template <class T>" << std::endl;
       std::cout << "std::vector<T> vec(";
-      for (int p = 0; p < i; ++p)
+      for (int64_t p = 0; p < i; ++p)
       {
          if (p < i - 1)
             std::cout << "T e" << p << ", ";
@@ -695,7 +695,7 @@ void make(int n)
       std::cout << ")" << std::endl;
       std::cout << "{" << std::endl;
       std::cout << "   std::vector<T> res;" << std::endl;
-      for (int p = 0; p < i; ++p)
+      for (int64_t p = 0; p < i; ++p)
          std::cout << "   res.push_back(e" << p << ");" << std::endl;
       std::cout << "   return res;" << std::endl;
       std::cout << "}" << std::endl;

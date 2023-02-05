@@ -8,43 +8,43 @@
 
 struct LC
 {
-   int      line;
-   int      col;
-            LC(int line, int col) : line(line), col(col) {}
+   int64_t      line;
+   int64_t      col;
+            LC(int64_t line, int64_t col) : line(line), col(col) {}
 };
 
-typedef int Pos;
+typedef int64_t Pos;
 
 struct Module
 {
    std::string      text;
-   std::vector<int> lines;
+   std::vector<int64_t> lines;
 
-   LC       lcofpos(int);
-   int      posoflc(int);
+   LC       lcofpos(int64_t);
+   int64_t      posoflc(int64_t);
    void     getLines();
 };
 
 struct State
 {
    Module*  module;
-   int      pos;
+   int64_t      pos;
    bool     startSingle;
    bool     startGroup;
    LC       min;
 
    State(Module* module) : module(module), pos(0), min(0, 0) {}
-   State    advance(int);
+   State    advance(int64_t);
 };
 
 struct AST
 {
    Module*  module;
-   int      sPos;
-   int      ePos;
+   int64_t      sPos;
+   int64_t      ePos;
    //Rule*    rule;
 
-   AST(Module* module, int sPos, int ePos) : module(module), sPos(sPos), ePos(ePos) {}
+   AST(Module* module, int64_t sPos, int64_t ePos) : module(module), sPos(sPos), ePos(ePos) {}
 };
 
 struct ParseResult;
@@ -54,7 +54,7 @@ struct Visitor;
 struct Rule
 {
    std::string        name;
-   std::vector<Rule*> parents;
+   //std::vector<Rule*> parents;
    
    Rule() {}
    
@@ -69,11 +69,25 @@ struct Rule
 
 struct NonTerminal : public Rule
 {
-   std::vector<Rule*> kids;
 };
 
 struct Terminal : public Rule
 {
+};
+
+struct Inner : public NonTerminal
+{
+   Rule* inner;
+
+   Inner(Rule* inner) : inner(inner) {}
+};
+
+struct Elems : public NonTerminal
+{
+   std::vector<Rule*> elems;
+
+   Elems() {}
+   Elems(std::vector<Rule*> elems) : elems(elems) {}
 };
 
 struct Epsilon : public Terminal
@@ -111,40 +125,36 @@ struct String : public Terminal
    ParseResult*  parse1(State st);
 };
 
-struct Alt : public NonTerminal
+struct Alt : public Elems
 {
-   std::vector<Rule*> elems;
-
    Alt();
    Alt(std::vector<Rule*> elems);
 
    ParseResult*  parse1(State st);
 };
 
-struct Seq : public NonTerminal
+struct Seq : public Elems
 {
-   std::vector<Rule*> elems;
-
    Seq      ();
    Seq      (std::vector<Rule*> elems);
 
    ParseResult*  parse1(State st);
 };
 
-struct IndentGroup : public NonTerminal
+struct IndentGroup : public Inner
 {
    Rule*    inner;
 
-   IndentGroup   (Rule* inner) : inner(inner) {}
+   IndentGroup   (Rule* inner) : Inner(inner) {}
 
    ParseResult*  parse1(State st);
 };
 
-struct IndentItem : public NonTerminal
+struct IndentItem : public Inner
 {
    Rule*    inner;
 
-   IndentItem   (Rule* inner) : inner(inner) {}
+   IndentItem   (Rule* inner) : Inner(inner) {}
 
    ParseResult*  parse1(State st);
 };
@@ -156,23 +166,20 @@ struct CheckIndent : public Terminal
    ParseResult*  parse1(State st);
 };
 
-struct ApplyP : public NonTerminal
+struct ApplyP : public Inner
 {
    Any   func;
-   Rule* inner;
 
-   ApplyP() {}
-   ApplyP(Any func, Rule* inner) : func(func), inner(inner) {}
+   ApplyP() : Inner(nullptr) {}
+   ApplyP(Any func, Rule* inner) : func(func), Inner(inner) {}
 
    ParseResult*  parse1(State st);
    //        void  visit(Visitor* visitor);
 };
 
-struct Skip : public NonTerminal
+struct Skip : public Inner
 {
-   Rule* inner;
-
-   Skip(Rule* inner) : inner(inner) {}
+   Skip(Rule* inner) : Inner(inner) {}
 
    ParseResult* parse1(State st);
    //void visit(Visitor* visitor);
@@ -340,11 +347,11 @@ struct Case : public Expr
    Case(Expr* case_, std::vector<CaseTerm*> terms, Expr* else_) : case_(case_), terms(terms), else_(else_) { }
 };
 
-struct ApplyExpr : public Expr
+struct Apply : public Expr
 {
    std::vector<Expr*>  elems;
 
-   ApplyExpr(std::vector<Expr*> elems) : elems(elems) {}
+   Apply(std::vector<Expr*> elems) : elems(elems) {}
 };
 
 struct Lambda : public Expr

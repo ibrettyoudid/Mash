@@ -9,13 +9,13 @@
 
 std::string TS;
 
-int debugLevel = 0;
-int debugFlag = true;
+int64_t debugLevel = 0;
+int64_t debugFlag = true;
 
 namespace std
 {
 
-   string operator+(const string& lhs, int rhs)
+   string operator+(const string& lhs, int64_t rhs)
    {
       stringstream ss;
       ss << lhs;
@@ -23,7 +23,7 @@ namespace std
       return ss.str();
    }
 
-   string& operator+=(string& lhs, int rhs)
+   string& operator+=(string& lhs, int64_t rhs)
    {
       stringstream ss;
       ss << lhs;
@@ -56,21 +56,21 @@ namespace std
       strm.write(&str[0], str.size());
    }
 
-   string pad(string In, int Len)
+   string pad(string In, size_t Len)
    {
-      if ((int)In.size() < Len)
+      if (In.size() < Len)
          return In + string(Len - In.size(), ' ');
-      else if ((int)In.size() > Len)
+      else if (In.size() > Len)
          return In.substr(0, Len);
       else
          return In;
    }
 
-   string lpad(string In, int Len)
+   string lpad(string In, size_t Len)
    {
-      if ((int)In.size() < Len)
+      if (In.size() < Len)
          return string(Len - In.size(), ' ') + In;
-      else if ((int)In.size() > Len)
+      else if (In.size() > Len)
          return In.substr(0,  Len);
       else
          return In;

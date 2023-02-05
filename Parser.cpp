@@ -135,7 +135,7 @@ Op* Parser::AsOp(Any v)
    return *lang->ops.find(&tempOp);
 }
 
-Any Parser::parseExpr(int MinPrec)
+Any Parser::parseExpr(int64_t MinPrec)
 {
    Any R = nil;
    Any tok = nextToken();
@@ -187,7 +187,7 @@ Any Parser::parseExpr(int MinPrec)
       }
       else if (tok == "[")
       {
-         int Ellipses = 0;
+         int64_t Ellipses = 0;
          getTokenNoCheck("[");
          R = mylist();
          if (nextStr() == "]")
@@ -208,7 +208,7 @@ Any Parser::parseExpr(int MinPrec)
          if (Ellipses)
          {
             const Cons* newr = nil;
-            int from = 0;
+            int64_t from = 0;
             for (Cons* c = R; c; c = c->cdr)
             {
                if (isNum(c->car))
@@ -219,8 +219,8 @@ Any Parser::parseExpr(int MinPrec)
                else if (c->car == "..")
                {
                   c = c->cdr;
-                  int to = c->car;
-                  for (int i = from + 1; i < to; ++i)
+                  int64_t to = c->car;
+                  for (size_t i = from + 1; i < to; ++i)
                      newr = pushBack(newr, i);
                }
             }
@@ -407,9 +407,9 @@ Any Parser::getToken(bool Space)
 
 }
 
-Any Parser::nextToken(int N)
+Any Parser::nextToken(int64_t N)
 {
-   for (int I = 0; ; ++I)
+   for (size_t I = 0; ; ++I)
    {
       ensure(I + 1);
       if (!IsSpace(queue[I]))
@@ -423,9 +423,9 @@ Any Parser::nextToken(int N)
    return Any();
 }
 
-void Parser::ensure(int N)
+void Parser::ensure(int64_t N)
 {
-   while (N > (int)queue.size())
+   while (N > queue.size())
       queue.push_back(getToken2());
 }
 
@@ -525,7 +525,7 @@ Any Parser::getToken3()
          else if (p < e - 1 && p[0] == '#' && p[1] == '|')
          {
             p += 2;
-            int Depth = 1;
+            int64_t Depth = 1;
             while (p < e)
             {
                if (p < e - 1 && p[0] == '#' && p[1] == '|')
@@ -565,7 +565,7 @@ Any Parser::getToken3()
    }
    */
    iter b = p;
-   int  BN = b - file->b;
+   int64_t  BN = b - file->b;
 
    if (*p == '(' || *p == '{' || *p == '[' || *p == '}' || *p == ')' || *p == ']' || *p == ',' || (lang == &scheme && (*p == '\'' || *p == '`')))
    {
@@ -659,7 +659,7 @@ Any Parser::getToken3()
       else if (dot || exp)
          return fromString<double>(n);
       else
-         return fromString<int>(n);
+         return fromString<int64_t>(n);
    }
    if (*p == '"')// || *p == '\'')
    {
@@ -692,7 +692,7 @@ Any Parser::getToken3()
                   break;
                case '0':	case '1':	case '2':	case '3':	case '4':	case '5':	case '6':	case '7':
                {
-                  int n = 0;
+                  int64_t n = 0;
                   while (p < e && *p >= '0' && *p <= '7')
                      n = n * 8 + (*p++ - '0');
                   s += (char)n;
@@ -700,7 +700,7 @@ Any Parser::getToken3()
                }
                case 'x':
                {
-                  int n = 0;
+                  int64_t n = 0;
                   for (;;)
                   {
                      if (p >= e) break;
@@ -734,7 +734,7 @@ Any Parser::getToken3()
 
 void Parser::loadState(TState State)
 {
-   int undo = (int)done.size() - State.nDone;
+   int64_t undo = (int64_t)done.size() - State.nDone;
    if (undo > 0)
    {
       queue.insert(queue.begin(), done.end() - undo, done.end());
@@ -748,7 +748,7 @@ void Parser::loadState(TState State)
    //ODSL("BACKTRACKED... nextToken="+nextStr());
 }
 
-int Parser::getLineNo()
+int64_t Parser::getLineNo()
 {
    return lineNo;
 }
@@ -903,19 +903,19 @@ optable   = [ doinfixr 9 [".", "!!"]
 
 Scheme::Scheme()
 {
-   getSymbol("list",    1, static_cast<int>(Keyword::list   ));
-   getSymbol("if",      1, static_cast<int>(Keyword::_if    ));
-   getSymbol("if1",     1, static_cast<int>(Keyword::_if1   ));
-   getSymbol("let",     1, static_cast<int>(Keyword::let    ));
-   getSymbol("let1",    1, static_cast<int>(Keyword::let1   ));
-   getSymbol("define",  1, static_cast<int>(Keyword::define ));
-   getSymbol("define1", 1, static_cast<int>(Keyword::define1));
-   getSymbol("lambda",  1, static_cast<int>(Keyword::lambda ));
-   getSymbol("apply1",  1, static_cast<int>(Keyword::apply1 ));
-   getSymbol("applyTo", 1, static_cast<int>(Keyword::applyTo));
-   getSymbol("begin",   1, static_cast<int>(Keyword::begin  ));
-   getSymbol("pop",     1, static_cast<int>(Keyword::pop    ));
-   getSymbol("callcc",  1, static_cast<int>(Keyword::callCC ));
+   getSymbol("list",    1, static_cast<int64_t>(Keyword::list   ));
+   getSymbol("if",      1, static_cast<int64_t>(Keyword::_if    ));
+   getSymbol("if1",     1, static_cast<int64_t>(Keyword::_if1   ));
+   getSymbol("let",     1, static_cast<int64_t>(Keyword::let    ));
+   getSymbol("let1",    1, static_cast<int64_t>(Keyword::let1   ));
+   getSymbol("define",  1, static_cast<int64_t>(Keyword::define ));
+   getSymbol("define1", 1, static_cast<int64_t>(Keyword::define1));
+   getSymbol("lambda",  1, static_cast<int64_t>(Keyword::lambda ));
+   getSymbol("apply1",  1, static_cast<int64_t>(Keyword::apply1 ));
+   getSymbol("applyTo", 1, static_cast<int64_t>(Keyword::applyTo));
+   getSymbol("begin",   1, static_cast<int64_t>(Keyword::begin  ));
+   getSymbol("pop",     1, static_cast<int64_t>(Keyword::pop    ));
+   getSymbol("callcc",  1, static_cast<int64_t>(Keyword::callCC ));
    /*
    getSymbol("let", 1, 1);
    getSymbol("let", 1, 1);
@@ -926,7 +926,7 @@ Scheme::Scheme()
 string ToText(OpFix* opFix)
 {
    if (opFix == nullptr) return "nullptr";
-   return TS+"name="+opFix->name+" Fix="+(int)opFix->fix+" prec="+opFix->prec+" Assoc="+(int)opFix->assoc;
+   return TS+"name="+opFix->name+" Fix="+(int64_t)opFix->fix+" prec="+opFix->prec+" Assoc="+(int64_t)opFix->assoc;
 }
 
 string ToText(Op* op)

@@ -5,8 +5,8 @@
 #pragma once
 
 extern std::string TS;
-extern int debugLevel;
-extern int debugFlag;
+extern int64_t debugLevel;
+extern int64_t debugFlag;
 namespace std
 {
 #ifndef _UNICODE
@@ -39,12 +39,12 @@ std::string toString(T n)
    return ss.str();
 }
 
-std::string  operator+ (const std::string& lhs, int rhs);
-std::string& operator+=(std::string& lhs, int rhs);
+std::string  operator+ (const std::string& lhs, int64_t rhs);
+std::string& operator+=(std::string& lhs, int64_t rhs);
 std::string  loadString(std::string  name);
 void         saveString(const std::string& str, std::string name);
-std::string  pad       (std::string  str, int len);
-std::string  lpad      (std::string  str, int len);
+std::string  pad       (std::string  str, size_t len);
+std::string  lpad      (std::string  str, size_t len);
 
 void ODST(std::string s);
 void ODSL(std::string s);

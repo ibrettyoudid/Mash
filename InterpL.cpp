@@ -13,12 +13,12 @@ using namespace std;
 
 void testDeque()
 {
-   deque<int> d;
+   deque<int64_t> d;
    d.push_back(1);
 
-   int* dp = &d[0];
+   int64_t* dp = &d[0];
 
-   for (int i = 0; i < 10000; ++i) d.push_back(i);
+   for (size_t i = 0; i < 10000; ++i) d.push_back(i);
 
    if (dp == &d[0])
       cout << "deque iterators are valid" << endl;
@@ -66,7 +66,7 @@ void InterpL::push(Any expr, Frame* env)
 
 void InterpL::push(Vec* todo, Frame* env)
 {
-   for (int i = todo->size() - 1; i >= 0; --i)
+   for (size_t i = todo->size() - 1; i >= 0; --i)
       push((*todo)[i], env);
 }
 
@@ -230,12 +230,12 @@ void InterpL::evalStep1()
             }
             case Keyword::apply1:
             {
-               int nArgs = second(expr);
+               int64_t nArgs = second(expr);
                --nArgs;
                Any func = popR();
 
                Vec args;
-               for (int i = 0; i < nArgs; ++i)
+               for (size_t i = 0; i < nArgs; ++i)
                   args.push_back(popR());
                apply(func, &args);
                return;
@@ -290,9 +290,9 @@ void InterpL::evalStep1()
 void InterpL::apply(Any func, Vec* a)
 {
    Vec&     args(*a);
-   int      maxArgs;
-   int      minArgs;
-   int      nArgs;
+   int64_t      maxArgs;
+   int64_t      minArgs;
+   int64_t      nArgs;
    Closure*  lambda;
    bool     blankArgs;
    bool     canApply;
@@ -313,7 +313,7 @@ void InterpL::apply(Any func, Vec* a)
    }
    else if (func.typeInfo->kind == kFunction)
    {
-      maxArgs = minArgs = func.typeInfo->args.size();
+      maxArgs = minArgs = func.typeInfo->members.size();
    }
    else
    {
@@ -323,7 +323,7 @@ void InterpL::apply(Any func, Vec* a)
 
    blankArgs = false;
    canApply  = nArgs >= minArgs;
-   for (int i = 0; i < nArgs; ++i)
+   for (size_t i = 0; i < nArgs; ++i)
       if (isBlank(args[i]))
       {
          blankArgs = true;
@@ -336,7 +336,7 @@ void InterpL::apply(Any func, Vec* a)
       if (nArgs > maxArgs)
       {
          Cons* rest = nil;
-         for (int i = nArgs - 1; i >= maxArgs; --i)
+         for (size_t i = nArgs - 1; i >= maxArgs; --i)
             rest = cons(args[i], rest);
          push(cons(getSymbol("applyTo"), rest), nullptr);
       }
@@ -348,9 +348,9 @@ void InterpL::apply(Any func, Vec* a)
          Frame* newenv = new Frame;
          newenv->context  = lambda->context;
 
-         int na = args.size();
-         int np = lambda->params.size();
-         for (int i = 0; i < na; ++i)
+         int64_t na = args.size();
+         int64_t np = lambda->params.size();
+         for (size_t i = 0; i < na; ++i)
             newenv->vars.push_back(Var(lambda->params[i].name, args[i]));
 
          push(cons(getSymbol("begin"), lambda->body), newenv);
@@ -360,13 +360,13 @@ void InterpL::apply(Any func, Vec* a)
       return;
    }
 
-   Closure* result = new Closure;  //lambda for missing args
-   Frame*  newEnv = new Frame;   //frame for existing args
+   Closure* result = new Closure;  //lambda for missing members
+   Frame*  newEnv = new Frame;   //frame for existing members
    if (lambda)
    {
       newEnv->context = lambda->context;
 
-      for (int i = 0; i < nArgs; ++i)
+      for (size_t i = 0; i < nArgs; ++i)
          if (isBlank(args[i]))
             result->params.push_back(lambda->params[i]);
          else                                                        
@@ -380,14 +380,14 @@ void InterpL::apply(Any func, Vec* a)
    {
       Cons*   resArgList = nil;
 
-      for (int i = 0; i < nArgs; ++i)
+      for (size_t i = 0; i < nArgs; ++i)
       {
          if (isBlank(args[i]))
             result->params.push_back(Var(string("arg")+i));
          //else                                                        
-            //newEnv->vars.push_back(Var(string("arg")+i, args[i]));
+            //newEnv->vars.push_back(Var(string("arg")+i, members[i]));
       }
-      for (int i = nArgs - 1; i >= 0; --i)
+      for (size_t i = nArgs - 1; i >= 0; --i)
       {
          if (isBlank(args[i]))
             resArgList = cons(getSymbol(string("arg")+i), resArgList);
@@ -408,10 +408,10 @@ void compile(Any& expr, Frame* env)
       Symbol* sym = expr;
       if (sym->name == "_") return; //symBlankArg;
 
-      int frameC = 0;
+      int64_t frameC = 0;
       for (Frame* lookIn = env; lookIn; lookIn = lookIn->context, ++frameC)
       {
-         int varC = 0;
+         int64_t varC = 0;
          for (DequeVar::iterator v = lookIn->vars.begin(); v != lookIn->vars.end(); ++v, ++varC)
             if (sym->name == v->name) 
             {
@@ -508,10 +508,10 @@ Any eval1(Any expr, Frame* env)
    {
       VarRef* vr = expr;
       Frame* lookIn = env;
-      for (int frameC = vr->frameC; frameC; --frameC)
+      for (size_t frameC = vr->frameC; frameC; --frameC)
          lookIn = lookIn->context;
       return lookIn->vars[vr->varC].value;
-      //for (int varC = vr->varC; varC; --varC)
+      //for (size_t varC = vr->varC; varC; --varC)
       //   v++;
       //return v->value;
    }
@@ -654,14 +654,14 @@ Any evalMulti(Any expr, Frame* env)
    return result;
 }
 
-Closure* createLambda(Any func, int nArgs)
+Closure* createLambda(Any func, int64_t nArgs)
 {
    Closure* lambda = new Closure;
-   for (int i = 0; i < nArgs; ++i)
+   for (size_t i = 0; i < nArgs; ++i)
       lambda->params.push_back(Var(string("arg")+i));
 
    Cons* argList = nullptr;
-   for (int i = nArgs - 1; i >= 0; --i)
+   for (size_t i = nArgs - 1; i >= 0; --i)
       argList = cons(getSymbol(string("arg")+i), argList);
 
    lambda->body = cons(func, argList);
@@ -671,9 +671,9 @@ Closure* createLambda(Any func, int nArgs)
 Any apply1(Any func, Vec* a)
 {
    Vec&     args(*a);
-   int      maxArgs;
-   int      minArgs;
-   int      nArgs;
+   int64_t      maxArgs;
+   int64_t      minArgs;
+   int64_t      nArgs;
    Closure*  closure;
    bool     blankArgs;
    bool     canApply;
@@ -696,7 +696,7 @@ Any apply1(Any func, Vec* a)
 
       blankArgs = false;
       canApply  = nArgs >= minArgs;
-      for (int i = 0; i < nArgs; ++i)
+      for (size_t i = 0; i < nArgs; ++i)
          if (isBlank(args[i]))
          {
             blankArgs = true;
@@ -712,9 +712,9 @@ Any apply1(Any func, Vec* a)
          Frame* newenv   = new Frame;
          newenv->context = closure->context;
 
-         int na = args.size();
-         int np = closure->params.size();
-         for (int i = 0; i < na; ++i)
+         int64_t na = args.size();
+         int64_t np = closure->params.size();
+         for (size_t i = 0; i < na; ++i)
             newenv->vars.push_back(Var(closure->params[i].name, args[i]));
 
          func = evalMulti(closure->body, newenv);
@@ -726,13 +726,13 @@ Any apply1(Any func, Vec* a)
 
       args.erase(args.begin(), args.begin() + maxArgs);
    }
-   Closure* result = new Closure;  //lambda for missing args
-   Frame*  newEnv = new Frame;   //frame for existing args
+   Closure* result = new Closure;  //lambda for missing members
+   Frame*  newEnv = new Frame;   //frame for existing members
    if (closure)
    {
       newEnv->context = closure->context;
 
-      for (int i = 0; i < nArgs; ++i)
+      for (size_t i = 0; i < nArgs; ++i)
          if (isBlank(args[i]))
             result->params.push_back(closure->params[i]);
          else                                                        
@@ -747,14 +747,14 @@ Any apply1(Any func, Vec* a)
    {
       Cons*   resArgList = nil;
 
-      for (int i = 0; i < nArgs; ++i)
+      for (size_t i = 0; i < nArgs; ++i)
       {
          if (isBlank(args[i]))
             result->params.push_back(Var(string("arg")+i));
          //else                                                        
-            //newEnv->vars.push_back(Var(string("arg")+i, args[i]));
+            //newEnv->vars.push_back(Var(string("arg")+i, members[i]));
       }
-      for (int i = nArgs - 1; i >= 0; --i)
+      for (size_t i = nArgs - 1; i >= 0; --i)
       {
          if (isBlank(args[i]))
             resArgList = cons(getSymbol(string("arg")+i), resArgList);
@@ -772,14 +772,14 @@ Any apply1(Any func, Vec* a)
    {
       if (!lambda) lambda = createLambda(func, nArgs);
 
-      Frame*  newEnv = new Frame;   //frame for existing args
-      Closure* result = new Closure;  //lambda for blank args
+      Frame*  newEnv = new Frame;   //frame for existing members
+      Closure* result = new Closure;  //lambda for blank members
 
-      for (int i = 0; i < nArgs; ++i)
-         if (args[i].typeInfo == tiSymbol && args[i] == symblankArg)
+      for (size_t i = 0; i < nArgs; ++i)
+         if (members[i].typeInfo == tiSymbol && members[i] == symblankArg)
             result->params.push_back(lambda->params[i]);
          else                                                        
-            newEnv->vars.push_back(Var(lambda->params[i].name, args[i]));
+            newEnv->vars.push_back(Var(lambda->params[i].name, members[i]));
 
       result->body       = lambda->body;
       result->context = newEnv;
@@ -796,7 +796,7 @@ Any apply(Any func, Vec* args/*, Frame* env*/)
 
 }
 
-int testFunc(int x, int y)
+int64_t testFunc(int64_t x, int64_t y)
 {
    cout << "x=" << x << " y=" << y << endl;
    return x+y;
@@ -807,7 +807,7 @@ void testFuncArgs(const Any& in)
    cout << "in=" << in << endl;
 }
 
-int global;
+int64_t global;
 
 struct typeidTest
 {
@@ -819,22 +819,22 @@ struct typeidTest2 : public typeidTest
 
 };
 
-void testConv1(int*** i)
+void testConv1(int64_t*** i)
 {
    cout << i << " " << *i << " " << **i << " " << ***i << endl;
 }
 
-void testConv2(int** i)
+void testConv2(int64_t** i)
 {
    cout << i << " " << *i << " " << **i << endl;
 }
 
-void testConv3(int* i)
+void testConv3(int64_t* i)
 {
    cout << i << " " << *i << endl;
 }
 
-void testConv4(int i)
+void testConv4(int64_t i)
 {
    cout << i << endl;
 }
@@ -845,8 +845,8 @@ int main(int argc, char* argv[])
 int _tmain(int argc, _TCHAR* argv[])
 #endif
 {
-   int local = 0;
-   int* newint = new int(55);
+   int64_t local = 0;
+   int64_t* newint = new int64_t(55);
    Any anewint(&newint);
    testConv1(anewint);
    testConv2(anewint);
@@ -867,11 +867,11 @@ int _tmain(int argc, _TCHAR* argv[])
  
    setup();
    cout << endl;
-   Any a = makePartApply(testFunc, 10);
+   Any a = makePartApply(testFunc, 10ll);
    cout << a << endl;
-   cout << a(5) << endl;
+   cout << a(5ll) << endl;
 
-   testFuncArgs(17);
+   testFuncArgs(17ll);
 
    parser.lang = &scheme;
    List::InterpL interp;
@@ -880,18 +880,21 @@ int _tmain(int argc, _TCHAR* argv[])
    userFrame->context = globalFrame;
    Var v("testvar", 5);
    cout << " Var                 : " << toTextAny(v) << endl;
-   cout << "&globalFrame->context: " << (int*)&globalFrame->context << endl;
+   cout << "&globalFrame->context: " << (int64_t*)&globalFrame->context << endl;
+   cout << "&globalFrame->context: typeid=" << typeid(&globalFrame->context).name() << endl;
    cout << "&globalFrame->context: " << toTextAny(&globalFrame->context) << endl;
    cout << " globalFrame->context: " << toTextAny(globalFrame->context) << endl;
    cout << "&globalFrame->vars   : " << toTextAny(&globalFrame->vars) << endl;
    cout << " globalFrame         : " << toTextAny(globalFrame) << endl;
 
    cout << "INT_MAX=" << INT_MAX << endl;
-   cout << "sizeof(int)=" << sizeof(int) << endl;
+   cout << "sizeof(int64_t)=" << sizeof(int64_t) << endl;
+   cout << "sizeof(size_t)=" << sizeof(size_t) << endl;
 
-   cout << getTypeAdd<int[100]>() << endl;
-   //cout << getTypeAdd<int[]>() << endl;
+   cout << getTypeAdd<int64_t[100]>() << endl;
+   //cout << getTypeAdd<int64_t[]>() << endl;
 
+   cout << convert(getTypeAdd<int>(), 32.4) << endl;
    for (;;)
    {
       cout << "\033[32mscheme>\033[0m ";

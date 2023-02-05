@@ -339,9 +339,9 @@ void TimerFrameD::exit(string result)
 //------------------------------------------------------------------------------
 string formatTime(double t)
 {
-	//int E = log10(T) - 3;
+	//int64_t E = log10(T) - 3;
 	//T = floor(T / pow(10.0, E) + 0.5) * pow(10.0, E);
-	int p = -(floor(log10(t)) - 2) / 3;
+	int64_t p = -(floor(log10(t)) - 2) / 3;
 	/*
 	T       log  prefix   E
 	1        0    0       0
@@ -368,10 +368,10 @@ void showTimes()
    vector<string> times;
    vector<string> timesT;
    vector<string> counts;
-   int lnames = 0;
-   int ltimes = 0;
-   int ltimesT = 0;
-   int lcounts = 0;
+   int64_t lnames = 0;
+   int64_t ltimes = 0;
+   int64_t ltimesT = 0;
+   int64_t lcounts = 0;
    for (FuncInfos::iterator i = funcInfos.begin(); i != funcInfos.end(); ++i)
    {
       names .push_back(i->first);
@@ -382,15 +382,15 @@ void showTimes()
       total += i->second->main.total;
       i->second->reset();
    }
-   for (int i = 0; i < (int)names.size(); ++i)
+   for (size_t i = 0; i < (int64_t)names.size(); ++i)
    {
-      lnames  = max(lnames , (int)names [i].size());
-      ltimes  = max(ltimes , (int)times [i].size());
-      ltimesT = max(ltimesT, (int)timesT[i].size());
-      lcounts = max(lcounts, (int)counts[i].size());
+      lnames  = max(lnames , (int64_t)names [i].size());
+      ltimes  = max(ltimes , (int64_t)times [i].size());
+      ltimesT = max(ltimesT, (int64_t)timesT[i].size());
+      lcounts = max(lcounts, (int64_t)counts[i].size());
    }
    std::cout << "total time=" << total / perfFreq << std::endl;
-   for (int i = 0; i < (int)names.size(); ++i)
+   for (size_t i = 0; i < (int64_t)names.size(); ++i)
    {
       std::cout << pad(names[i], lnames)
                 << " t="  << pad(times[i], ltimes)

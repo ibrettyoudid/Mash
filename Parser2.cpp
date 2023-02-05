@@ -13,9 +13,9 @@ Any id(Any x)
    return x;
 }
 
-LC Module::lcofpos(int pos)
+LC Module::lcofpos(int64_t pos)
 {
-   int l = lower_bound(lines.begin(), lines.end(), pos+1) - lines.begin() - 1;
+   int64_t l = lower_bound(lines.begin(), lines.end(), pos+1) - lines.begin() - 1;
 
    return LC(l, pos - lines[l]);
 }
@@ -25,9 +25,9 @@ Range  ::Range  (char min, char max)    : min(min), max(max) {}
 Char   ::Char   (char c)                : c(c) {}
 String ::String (string text)           : text(text) {}
 Alt    ::Alt    ()                      {}
-Alt    ::Alt    (vector<Rule*> _elems)   : elems(_elems) {}
+Alt    ::Alt    (vector<Rule*> _elems)   : Elems(_elems) {}
 Seq    ::Seq    ()                      {}
-Seq    ::Seq    (vector<Rule*> _elems)   : elems(_elems) {}
+Seq    ::Seq    (vector<Rule*> _elems)   : Elems(_elems) {}
 
 Epsilon*  epsilon  = new Epsilon;
 EpsilonE* epsilonE = new EpsilonE;
@@ -81,73 +81,73 @@ Any constFunc(Any r)
    return makePartApply(constCall, r);
 }
 
-ParseResult* Rule::parse(State st)
+ParseResult* Rule::parse(State beginS)
 {
    string n = toText(Any(*this, Dynamic()));
-   ODSI("parse "+toTextInt(st.pos)+" "+n);
-   ParseResult* r = parse1(st);
+   ODSI("-> parse "+toTextInt(beginS.pos)+" "+n);
+   ParseResult* r = parse1(beginS);
    if (r)
-      ODSO("<- parse "+toTextInt(r->endS.pos)+" "+toText(r->ast)+" parser="+name+" "+n);
+      ODSO("<- parse "+toTextInt(r->endS.pos)+" "+n+" "+toText(r->ast));
    else
       ODSO("<- parse "+n+" failed");
    return r;
 }
 
-ParseResult* Rule::parse1(State startS)
+ParseResult* Rule::parse1(State beginS)
 {
    throw "error";
 }
 
-ParseResult* Epsilon::parse1(State startS)
+ParseResult* Epsilon::parse1(State beginS)
 {
-   return new ParseResult(startS, epsilonE);
+   return new ParseResult(beginS, epsilonE);
 }
 
-ParseResult* String::parse1(State startS)
+ParseResult* String::parse1(State beginS)
 {
-   int l = text.size();
-   if (startS.module->text.substr(startS.pos, l) == text)
+   int64_t l = text.size();
+   if (beginS.module->text.substr(beginS.pos, l) == text)
    {
-      State endS = startS.advance(l);
+      State endS = beginS.advance(l);
       return new ParseResult(endS, text);
    }
    else
       return nullptr;
 }
 
-ParseResult* Char::parse1(State startS)
+ParseResult* Char::parse1(State beginS)
 {
-   if (startS.pos < startS.module->text.size())
+   if (beginS.pos < beginS.module->text.size())
    {
-      if (c == (startS.module->text)[startS.pos])
+      if (c == (beginS.module->text)[beginS.pos])
       {
-         State endS = startS.advance(1);
+         State endS = beginS.advance(1);
          return new ParseResult(endS, c);
       }
    }
    return nullptr;
 }
 
-ParseResult* Range::parse1(State startS)
+ParseResult* Range::parse1(State beginS)
 {
-   if (startS.pos < startS.module->text.size())
+   if (beginS.pos < beginS.module->text.size())
    {
-      char c = (startS.module->text)[startS.pos];
+      char c = (beginS.module->text)[beginS.pos];
       if (c >= min && c <= max)
       {
-         State endS = startS.advance(1);
+         State endS = beginS.advance(1);
          return new ParseResult(endS, c);
       }
    }
    return nullptr;
 }
 
-ParseResult* Seq::parse1(State startS)
+ParseResult* Seq::parse1(State beginS)
 {
    ParseResult* rinner;
-   State s(startS);
+   State s(beginS);
    Vec resElems;
-   for (int i = 0; i < elems.size(); ++i)
+   for (size_t i = 0; i < elems.size(); ++i)
    {
       rinner = elems[i]->parse(s);
       if (rinner == nullptr) 
@@ -159,11 +159,11 @@ ParseResult* Seq::parse1(State startS)
    return new ParseResult(s, resElems);
 }
 
-ParseResult* Alt::parse1(State startS)
+ParseResult* Alt::parse1(State beginS)
 {
-   for (int i = 0; i < elems.size(); ++i)
+   for (size_t i = 0; i < elems.size(); ++i)
    {
-      ParseResult* r = elems[i]->parse(startS);
+      ParseResult* r = elems[i]->parse(beginS);
       if (r) 
          return r;
    }
@@ -175,11 +175,11 @@ bool doCheckIndent(LC cur, LC min)
    return cur.line > min.line ? cur.col > min.col : cur.col >= min.col;
 }
 
-ParseResult* IndentGroup::parse1(State startS)
+ParseResult* IndentGroup::parse1(State beginS)
 {
-   LC curLC = startS.module->lcofpos(startS.pos);
-   //if (!doCheckIndent(curLC, startS.min)) return nullptr;
-   State innerS(startS);
+   LC curLC = beginS.module->lcofpos(beginS.pos);
+   //if (!doCheckIndent(curLC, beginS.min)) return nullptr;
+   State innerS(beginS);
    //if (indentNext)
    //   innerS.min = curLC;
    //else
@@ -189,64 +189,64 @@ ParseResult* IndentGroup::parse1(State startS)
    ParseResult* r = inner->parse(innerS);
    if (r == nullptr) return nullptr;
    State resS(r->endS);
-   resS.min         = startS.min;
-   resS.startGroup  = startS.startGroup ;
-   resS.startSingle = startS.startSingle;
+   resS.min         = beginS.min;
+   resS.startGroup  = beginS.startGroup ;
+   resS.startSingle = beginS.startSingle;
    return new ParseResult(resS, r->ast);
 }
 
-ParseResult* IndentItem::parse1(State startS)
+ParseResult* IndentItem::parse1(State beginS)
 {
-   LC curLC = startS.module->lcofpos(startS.pos);
-   State innerS(startS);
+   LC curLC = beginS.module->lcofpos(beginS.pos);
+   State innerS(beginS);
    innerS.startSingle = true;
    ParseResult* r = inner->parse(innerS);
    if (r == nullptr) return nullptr;
    State resS(r->endS);
-   resS.min         = startS.min;
+   resS.min         = beginS.min;
    resS.startGroup  = false;
-   resS.startSingle = startS.startSingle;
+   resS.startSingle = beginS.startSingle;
    return new ParseResult(resS, r->ast);
 }
 
-ParseResult* CheckIndent::parse1(State startS)
+ParseResult* CheckIndent::parse1(State beginS)
 {
-   LC curLC = startS.module->lcofpos(startS.pos);
-   if (startS.startSingle)
+   LC curLC = beginS.module->lcofpos(beginS.pos);
+   if (beginS.startSingle)
    {
-      if (startS.startGroup)
+      if (beginS.startGroup)
       {
-         startS.min = curLC;
+         beginS.min = curLC;
       }
       else
       {
-         if (curLC.col < startS.min.col) return nullptr;
+         if (curLC.col < beginS.min.col) return nullptr;
       }
    }
    else
    {
-      if (curLC.col <= startS.min.col) return nullptr;
+      if (curLC.col <= beginS.min.col) return nullptr;
    }
-   return new ParseResult(startS, epsilonE);
+   return new ParseResult(beginS, epsilonE);
 }
 
 Rule* checkIndent = new CheckIndent();
 
-ParseResult* ApplyP::parse1(State s)
+ParseResult* ApplyP::parse1(State beginS)
 {
-   ParseResult* r = inner->parse(s);
+   ParseResult* r = inner->parse(beginS);
    if (r == nullptr) return r;
    return new ParseResult(r->endS, func(r->ast));
 }
 
-ParseResult* Skip::parse1(State s)
+ParseResult* Skip::parse1(State beginS)
 {
-   ParseResult* r = inner->parse(s);
+   ParseResult* r = inner->parse(beginS);
    if (r == nullptr) return r;
    return new ParseResult(r->endS, new SkipE(r->ast));
 }
 
-State State::advance(int n)
+State State::advance(int64_t n)
 {
    State result(*this);
    result.pos += n;
@@ -338,10 +338,13 @@ Rule* chainr(Rule* term, Rule* op)
 
 Any chainlR(Vec r)
 {
-   Any term = r[0];
+   Expr* term = r[0];
    Vec ops = r[1];
-   for (int i = 0; i < (int)ops.size(); ++i)
-      term = push_front(ops[i], term);
+   for (size_t i = 0; i < ops.size(); ++i)
+   {
+      Vec opsi = ops[i];
+      term = new Apply(vec<Expr*>(opsi[0], term, opsi[1]));
+   }
    return term;
 }
 
@@ -350,7 +353,10 @@ Rule* chainl(Rule* term, Rule* op)
    return applyP(chainlR, seq(term, many(seq(op, term))))->setName("chainl");
 }
 
-Rule* whiteSpace = many(new Range(32, 32))->setName("whiteSpace");
+Rule* whiteSpace = many(new Range(0, 32))->setName("whiteSpace");
+Rule* lineComment = seq(new String("--"), many(new Range(32, 255)), new Char('\n'))->setName("lineComment");
+Rule* blockComment1 = alt(new String("-}"), seq(new Range(0, 255)));
+Rule* blockComment = seq(new String("{-"), blockComment1)->setName("blockComment");
 
 Any lexemeR(Vec in)
 {
@@ -375,18 +381,18 @@ string stringOfVec(Vec in)
    return result;
 }
 
-int integerR(vector<Any> xs)
+int64_t integerR(vector<Any> xs)
 {
    istringstream s(stringOfVec(xs));
-   int i;
+   int64_t i;
    s >> i;
    return i;
 }
 
-int intOfString(string s)
+int64_t intOfString(string s)
 {
    istringstream ss(s);
-   int i;
+   int64_t i;
    ss >> i;
    return i;
 }
@@ -412,7 +418,7 @@ Any numberR(Vec in)
    string mantissaS = stringOfVec(in[0]);
    if (in[1].typeInfo == tiVec || in[2].typeInfo == tiVec)
    {
-      int exponent;
+      int64_t exponent;
       if (in[2].typeInfo == tiVec)
       {
          Vec v = in[2];
@@ -443,7 +449,7 @@ Lambda* lambdaR(Vec in)
 {
    TypeInfo* type = new TypeInfo();
    for (string p : Vec(in[0]))
-      type->add(Member(getSymbol(p), tiAny));
+      type->add(new Member(getSymbol(p), tiAny));
    return new Lambda(type, in[1]);
 }
 
@@ -468,12 +474,15 @@ Rule* integer    = lexeme(applyP(integerR, many1(new Range('0', '9'))))->setName
 Rule* number     = lexeme(applyP(numberR , seq(many1(new Range('0', '9')), 
                                                optional(seq(new Char('.'), many(new Range('0', '9')))), 
                                                optional(seq(new Char('e'), alt(new Char('+'), new Char('-'), epsilon), many(new Range('0', '9')))))))->setName("number");
-Rule* identifier = lexeme(applyP(identR  , many1(new Range('a', 'z'))))->setName("identifier");
+
+Rule* identifier = lexeme(applyP(identR  , seq(alt(new Range('a', 'z'), new Range('A', 'Z'), new Char('_')), 
+                                               many(alt(new Range('a', 'z'), new Range('A', 'Z'), new Range('0', '9'), new Char('_'))))))->setName("identifier");
+
 Rule* lambda     = applyP(lambdaR, seq(skip(symbol("\\")), 
-                                   many1(identifier), 
-                                   skip(symbol("->")), 
-                                   expr))
-                               ->setName("lambda");
+                                       many1(identifier), 
+                                       skip(symbol("->")), 
+                                       expr))
+                                          ->setName("lambda");
 
 Rule* ifCase     = seq(expr,
                        symbol("then"),
@@ -494,7 +503,12 @@ Rule* terms      = many1(term)->setName("terms");
 void initParser2()
 {
    *(ApplyP*)expr = *(ApplyP*)chainl(chainl(term, new String("*")), new String("+"))->setName("expr");//and then finish the loop
+   ((Seq*)((Alt*)blockComment1)->elems[1])->elems.push_back(blockComment1);
    TypeInfo* tiRule        = getTypeAdd<Rule       >();
+   TypeInfo* tiTerminal    = getTypeAdd<Terminal   >();
+   TypeInfo* tiNonTerminal = getTypeAdd<NonTerminal>();
+   TypeInfo* tiElems       = getTypeAdd<Elems      >();
+   TypeInfo* tiInner       = getTypeAdd<Inner      >();
    TypeInfo* tiAlt         = getTypeAdd<Alt        >();
    TypeInfo* tiSeq         = getTypeAdd<Seq        >();
    TypeInfo* tiEpsilon     = getTypeAdd<Epsilon    >();
@@ -505,22 +519,29 @@ void initParser2()
    TypeInfo* tiIndentGroup = getTypeAdd<IndentGroup>();
    TypeInfo* tiIndentItem  = getTypeAdd<IndentItem >();
    TypeInfo* tiCheckIndent = getTypeAdd<CheckIndent>();
-   addTypeLink(tiRule, tiRange      );
-   addTypeLink(tiRule, tiAlt        );
-   addTypeLink(tiRule, tiSeq        );
-   addTypeLink(tiRule, tiEpsilon    );
-   addTypeLink(tiRule, tiChar       );
-   addTypeLink(tiRule, tiString     );
-   addTypeLink(tiRule, tiApplyP     );
-   addTypeLink(tiRule, tiIndentGroup);
-   addTypeLink(tiRule, tiIndentItem );
-   addTypeLink(tiRule, tiCheckIndent);
+   addTypeLink(tiRule       , tiTerminal   );
+   addTypeLink(tiRule       , tiNonTerminal);
+   addTypeLink(tiNonTerminal, tiElems      );
+   addTypeLink(tiNonTerminal, tiInner      );
+   addTypeLink(tiTerminal   , tiRange      );
+   addTypeLink(tiElems      , tiAlt        );
+   addTypeLink(tiElems      , tiSeq        );
+   addTypeLink(tiTerminal   , tiEpsilon    );
+   addTypeLink(tiTerminal   , tiChar       );
+   addTypeLink(tiTerminal   , tiString     );
+   addTypeLink(tiInner      , tiApplyP     );
+   addTypeLink(tiInner      , tiIndentGroup);
+   addTypeLink(tiInner      , tiIndentItem );
+   addTypeLink(tiTerminal   , tiCheckIndent);
    addMember(&Rule  ::name, "name");
+   addMember(&Inner ::inner, "inner");
+   //addMember(&Elems ::elems, "elems");
    addMember(&Char  ::c   , "c"   );
    addMember(&Range ::min , "min" );
    addMember(&Range ::max , "max" );
    addMember(&String::text, "text");
 
+   addMember(&Apply::elems, "elems");
    /*
    Rule* p = chainl(chainl(integer, new String("*")), new String("+"));
    parse(p, "123+456*789");
@@ -531,10 +552,10 @@ void initParser2()
 
 void Module::getLines()
 {
-   int l = text.size();
+   int64_t l = text.size();
    lines.clear();
    lines.push_back(0);
-   for (int i = 0; i < l-1; ++i)
+   for (size_t i = 0; i < l-1; ++i)
       if (text[i] == '\n')
          lines.push_back(i + 1);
 }

@@ -72,8 +72,8 @@ struct Frame
 struct SymbolData
 {
    std::string  name;
-   int      id;
-            SymbolData(std::string name, int id = -1) : name(name), id(id) {}
+   int64_t      id;
+            SymbolData(std::string name, int64_t id = -1) : name(name), id(id) {}
 };
 
 template <class T>
@@ -87,16 +87,16 @@ struct NumberRange
 
       const_iterator(T i, T step = 1) : i(i), step(step) { }
       const value_type& operator* (     ) { return i; }
-      value_type        operator[](int n) { return i + n * step; }
+      value_type        operator[](int64_t n) { return i + n * step; }
       const_iterator&   operator++(     ) { i += step; return *this; }
       const_iterator&   operator--(     ) { i -= step; return *this; }
       const_iterator    operator++(int  ) { const_iterator n(*this); i += step; return n; }
       const_iterator    operator--(int  ) { const_iterator n(*this); i -= step; return n; }
-      const_iterator    operator+ (int n) { return const_iterator(i + step * n, step); }
-      const_iterator    operator- (int n) { return const_iterator(i - step * n, step); }
-      const_iterator&   operator+=(int n) { i += step * n; return *this; }
-      const_iterator&   operator-=(int n) { i -= step * n; return *this; }
-      int               operator- (const_iterator rhs) { return (i - rhs.i) / step; }
+      const_iterator    operator+ (int64_t n) { return const_iterator(i + step * n, step); }
+      const_iterator    operator- (int64_t n) { return const_iterator(i - step * n, step); }
+      const_iterator&   operator+=(int64_t n) { i += step * n; return *this; }
+      const_iterator&   operator-=(int64_t n) { i -= step * n; return *this; }
+      int64_t               operator- (const_iterator rhs) { return (i - rhs.i) / step; }
       bool              operator==(const_iterator rhs) { return i == rhs.i; }
       bool              operator!=(const_iterator rhs) { return i != rhs.i; }
       bool              operator<=(const_iterator rhs) { return i <= rhs.i; }
@@ -131,14 +131,15 @@ struct NumberRange
 struct VarRef
 {
    std::string  name;
-   int      frameC;
-   int      varC;
-            VarRef(std::string name, int frameC, int varC) : name(name), frameC(frameC), varC(varC) {}
+   int64_t      frameC;
+   int64_t      varC;
+            VarRef(std::string name, int64_t frameC, int64_t varC) : name(name), frameC(frameC), varC(varC) {}
 };
 
 extern Symbol *symBlankArg;
 extern Cons   *nil;
 
+extern MultimethodAny       convert;
 extern MultimethodAny       pushBack   ;
 extern MultimethodAny       insertElemX;
 
@@ -159,11 +160,11 @@ extern TypeInfo* tiVec     ;
 
 extern Frame*    globalFrame;
 
-std::string toText      (Any a         , int max = INT_MAX);
-std::string toTextInt   (int n         , int max = INT_MAX);
-std::string toTextIntR  (int& n        , int max = INT_MAX);
-std::string toTextTypeInfo(TypeInfo* ti, int max = INT_MAX);
-std::string toTextAny   (Any a         , int max = INT_MAX);
+std::string toText      (Any a         , int64_t max = INT_MAX);
+std::string toTextInt   (int64_t n         , int64_t max = INT_MAX);
+std::string toTextIntR  (int64_t& n        , int64_t max = INT_MAX);
+std::string toTextTypeInfo(TypeInfo* ti, int64_t max = INT_MAX);
+std::string toTextAny   (Any a         , int64_t max = INT_MAX);
 
 void        setup       ();
 Cons*       mylist      ();
@@ -171,7 +172,7 @@ Cons*       mylist      (Any i0);
 Cons*       mylist      (Any i0, Any i1);
 Cons*       mylist      (Any i0, Any i1, Any i2);
 Cons*       mylist      (Any i0, Any i1, Any i2, Any i3);
-int         lengthCons  (Cons* c);
+int64_t         lengthCons  (Cons* c);
 Any&        car         (Cons* c);
 Any&        cdr         (Cons* c);
 Any&        first       (Cons* c);

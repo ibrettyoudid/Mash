@@ -11,7 +11,7 @@ using namespace std;
 Symbols symbols;
 Symbol* symBlankArg = getSymbol("_", 0, 0);
 
-Symbol* getSymbol(string name, int group, int id)
+Symbol* getSymbol(string name, int64_t group, int64_t id)
 {
    Symbol s(name);
    auto i = symbols.find(&s);
@@ -25,6 +25,7 @@ Symbol* getSymbol(string name, int group, int id)
 }
 Cons* nil = nullptr;
 
+MultimethodAny       convert     ("convert");
 MultimethodAny       massign     ("assign");
 Multimethod<string>  toTextAux   ("toTextAux");
 Multimethod<void>    findCycles  ("findCycles");
@@ -42,7 +43,7 @@ MultimethodAny       fold        ;
 MultimethodAny       mderef      ;
 MultimethodAny       minc        ;
 MultimethodAny       mdec        ;
-Multimethod<int>     length      ;
+Multimethod<int64_t>     length      ;
 MultimethodAny       madd        ;
 MultimethodAny       msubtract   ;
 MultimethodAny       mmultiply   ;
@@ -53,7 +54,6 @@ Multimethod<bool>    mmore       ;
 Multimethod<bool>    mmoreEqual  ;
 Multimethod<bool>    mequal      ;
 Multimethod<bool>    mnotEqual   ;
-Multimethod<Any>     convert     ;
 
 bool operator==(Any a, Any b) { return mequal(a, b); }
 bool operator!=(Any a, Any b) { return mnotEqual(a, b); }
@@ -93,8 +93,8 @@ TypeInfo* tiVec;
 Frame* globalFrame;
 
 set<void*> marked;
-map<void*, int> cycles;
-int cycleCounter;
+map<void*, int64_t> cycles;
+int64_t cycleCounter;
 
 List::Closure::Closure(Any _params, Any _body, Frame* _context) : body(_body), context(_context)
 {
@@ -167,7 +167,7 @@ Cons* mylist(Any i0) { return new Cons(i0, nil); }
 Cons* mylist(Any i0, Any i1) { return new Cons(i0, new Cons(i1, nil)); }
 Cons* mylist(Any i0, Any i1, Any i2) { return new Cons(i0, new Cons(i1, new Cons(i2, nil))); }
 Cons* mylist(Any i0, Any i1, Any i2, Any i3) { return new Cons(i0, new Cons(i1, new Cons(i2, new Cons(i3, nil)))); }
-Cons* mylistN(Any* args, int np)
+Cons* mylistN(Any* args, int64_t np)
 {
    Cons* res(nil);
    while (np)
@@ -201,9 +201,9 @@ bool isBlank(Any c)
    return false;
 }
 
-int lengthCons(Cons* col)
+int64_t lengthCons(Cons* col)
 {
-   int r = 0;
+   int64_t r = 0;
    while (col)
    {
       col = col->cdr;
@@ -212,7 +212,7 @@ int lengthCons(Cons* col)
    return r;
 }
 
-Any getElemCons(Cons* c, int n)
+Any getElemCons(Cons* c, int64_t n)
 {
    while (n)
    {
@@ -233,7 +233,7 @@ Cons* reverse(Cons* c)
    return res;
 }
 
-Any drop(Cons* c, int n)
+Any drop(Cons* c, int64_t n)
 {
    while (n)
    {
@@ -243,6 +243,7 @@ Any drop(Cons* c, int n)
    return c;
 }
 
+template <class From, class To> To tconvert (From from) { return from; }
 template <class T> auto tassign  (T& a, T b) { return a = b; }
 template <class T> T tadd     (T a, T b) { return a+b; }
 template <class T> T tsubtract(T a, T b) { return a-b; }
@@ -256,7 +257,7 @@ template <class T> bool tlessEqual(T a, T b) { return a <= b; }
 template <class T> bool tmore     (T a, T b) { return a >  b; }
 template <class T> bool tmoreEqual(T a, T b) { return a >= b; }
 
-template <class T> string ttoText(T a, int max) 
+template <class T> string ttoText(T a, int64_t max) 
 {
    std::stringstream ss; 
    ss << a;
@@ -311,7 +312,7 @@ toTextVar
 fallthrough = toTextAny which uses the member pointers in the typeInfo to display any type at all
 */
 
-string toText(Any a, int max)
+string toText(Any a, int64_t max)
 {
    marked.clear();
    cycles.clear();
@@ -341,25 +342,25 @@ void findCyclesAny(Any)
 {
 }
 
-string indent(string in, unsigned int n)
+string indent(string in, uint64_t n)
 {
-   for (int i = in.size() - 2; i >= 0; --i)
+   for (int64_t i = in.size() - 2; i >= 0; --i)
       if (in[i] == '\n')
-         in.insert((unsigned int)i + 1, n, ' ');
+         in.insert((uint64_t)i + 1, n, ' ');
    return in;
 }
 
 template <class C>
-string toTextCont(C* c, int max = INT_MAX)
+string toTextCont(C* c, int64_t max = INT_MAX)
 {
    string result("[");
    vector<string> elemStrs;
    typename C::iterator b = c->begin();
    typename C::iterator e = c->end();
-   int len = 2;
+   size_t len = 2;
    for (typename C::iterator i = b; i != e;)
    {
-      string elemStr(toTextAux(*i, max - len));
+      string elemStr(toTextAux(*i, max - (int64_t)len));
       if (cycles.count(&*i))
          elemStr = string("#") + cycles[&*i] + "=" + elemStr;
       ++i;
@@ -367,10 +368,10 @@ string toTextCont(C* c, int max = INT_MAX)
       elemStrs.push_back(elemStr);
       len += elemStr.size();
    }
-   int count = elemStrs.size();
+   size_t count = elemStrs.size();
    if (len > max)
    {
-      for (int i = 0; i < count;)
+      for (size_t i = 0; i < count;)
       {
          result += indent(elemStrs[i], 1);
          ++i;
@@ -379,7 +380,7 @@ string toTextCont(C* c, int max = INT_MAX)
    }
    else
    {
-      for (int i = 0; i < count;)
+      for (size_t i = 0; i < count;)
       {
          result += elemStrs[i];
          ++i;
@@ -390,22 +391,22 @@ string toTextCont(C* c, int max = INT_MAX)
    return result;
 }
 
-string toTextInt(int n, int max)
+string toTextInt(int64_t n, int64_t max)
 {
    return TS+n;
 }
 
-string toTextIntR(int& n, int max)
+string toTextIntR(int64_t& n, int64_t max)
 {
    return TS+n;
 }
 
-string toTextBool(bool b, int max)
+string toTextBool(bool b, int64_t max)
 {
    return b ? "true" : "false";
 }
 
-string toTextCons(Cons* c, int max)
+string toTextCons(Cons* c, int64_t max)
 {
    if (c == nullptr) return "()";
    string result(TS+"("+toTextAux(c->car, max));
@@ -431,40 +432,40 @@ string toTextCons(Cons* c, int max)
    }
 }
 
-string toTextCons1(Cons* c, int max)
+string toTextCons1(Cons* c, int64_t max)
 {
    return TS+"("+toTextAux(c->car, max)+" . "+toTextAux(c->cdr, max)+")";
 }
 
-string toTextSym(Symbol* s, int max)
+string toTextSym(Symbol* s, int64_t max)
 {
    return s->name;
 }
 
-string toTextOp(Op* op, int max)
+string toTextOp(Op* op, int64_t max)
 {
    return op->name;
 }
 
-string toTextParseEnd(ParseEnd p, int max)
+string toTextParseEnd(ParseEnd p, int64_t max)
 {
    return "$$$ParseEnd$$$";
 }
 
-string toTextChar(char c, int max)
+string toTextChar(char c, int64_t max)
 {
    return TS+"'"+string(1, c)+"'";
 }
 
-string toTextString(string s, int max)
+string toTextString(string s, int64_t max)
 {
    return TS+"\""+s+"\"";
 }
 
-string toTextLambda(List::Closure* l, int max)
+string toTextLambda(List::Closure* l, int64_t max)
 {
    string result = "\\";
-   for (int i = 0; i < (int)l->params.size(); ++i)
+   for (size_t i = 0; i < l->params.size(); ++i)
    {
       result += l->params[i].name + " ";
    }
@@ -474,7 +475,7 @@ string toTextLambda(List::Closure* l, int max)
 }
 
 
-string toTextTypeInfo(TypeInfo* ti, int max)
+string toTextTypeInfo(TypeInfo* ti, int64_t max)
 {
    string result;
    result += TS+"TypeInfo {\n   name = "+ti->name+"\n   size = "+ti->size+"\n   kind = ";
@@ -487,22 +488,22 @@ string toTextTypeInfo(TypeInfo* ti, int max)
    }
    if (ti->of)
       result += TS+"   of = "+indent(toTextTypeInfo(ti->of), 3);
-   for (int i = 0; i < (int)ti->args.size(); ++i)
-      result += TS+"   arg["+i+"] = "+indent(toTextTypeInfo(ti->args[i]->typeInfo), 3);
+   for (size_t i = 0; i < ti->members.size(); ++i)
+      result += TS+"   arg["+i+"] = "+indent(toTextTypeInfo(ti->members[i]->typeInfo), 3);
    if (ti->linear.size())
    {
       result += TS+"   linear = ";
-      for (int i = 0; i < (int)ti->linear.size(); ++i)
+      for (size_t i = 0; i < ti->linear.size(); ++i)
       {
          if (i > 0) result += ", ";
-         result += ti->linear[i]->base->name;
+         result += ti->linear[i]->name;
       }
    }
    result += "}\n";
    return result;
 }
 
-string toTextFrame(Frame* f, int max)
+string toTextFrame(Frame* f, int64_t max)
 {
    if (f == nullptr)
       return "nullptr";
@@ -516,26 +517,26 @@ string toTextFrame(Frame* f, int max)
       return TS+"HiddenFrame";
 }
 
-string toTextMultimethod(MultimethodAny m, int max)
+string toTextMultimethod(MultimethodAny m, int64_t max)
 {
    return TS+"Multimethod("+m.name+")";
 }
 
-string toTextVar(Var v, int max)
+string toTextVar(Var v, int64_t max)
 {
    return TS+v.name+" = "+toText(v.value, max);
 }
 
-string toTextAny(Any a, int max)
+string toTextAny(Any a, int64_t max)
 {
    ostringstream o;
    if (a.typeInfo->kind == kFunction)
-      o << a.typeInfo->getName() << " = " << *(int**)a.ptr;
+      o << a.typeInfo->getName() << " = " << *(int64_t**)a.ptr;
    else
    {
       while (a.prDepth() > 0)
       {
-         o << *(int**)a.ptr;
+         o << *(int64_t**)a.ptr;
          switch (a.typeInfo->kind)
          {
             case kReference:
@@ -562,16 +563,16 @@ string toTextAny(Any a, int max)
       {
          o << a.typeInfo->getName() << " ";
          o << "{";
-         for (int i = 0; i < (int)a.typeInfo->args.size(); ++i)
+         for (size_t i = 0; i < a.typeInfo->allMembers.size(); ++i)
          {
             if (i > 0) o << ", ";
-            o << a.typeInfo->args[i]->symbol->name << "=";
-            //Any v(a.typeInfo->of->args[i]->ptrToMember(a));
+            o << a.typeInfo->allMembers[i]->symbol->name << "=";
+            //Any v(a.typeInfo->of->members[i]->ptrToMember(a));
             //Any v(a[i]);
             //v = v.derp();
             //v.showhex();
-            o << toTextAux(a[i].derp(), max);
-            //vars.push_back(Var(a.typeInfo->args[i]->name, a.typeInfo->args[i]->ptrToMember(a)));
+            o << toTextAux(a.member(i), max);
+            //vars.push_back(Var(a.typeInfo->members[i]->name, a.typeInfo->members[i]->ptrToMember(a)));
          }
          o << "}";
       }
@@ -579,10 +580,10 @@ string toTextAny(Any a, int max)
       Vec vars;
       TypeInfo* ti = a.typeInfo;
       vars.push_back(ti->name);
-      for (int l = 0; l < (int)ti->linear.size(); ++l)
+      for (size_t l = 0; l < ti->linear.size(); ++l)
       {
          TypeInfo* lti = ti->linear[l]->base;
-         for (int i = 0; i < (int)lti->args.size(); ++i)
+         for (size_t i = 0; i < lti->args.size(); ++i)
          {
             Any val(lti->args[i]->ptrToMember(a));
             vars.push_back(Var(lti->args[i]->symbol->name, val));
@@ -600,12 +601,12 @@ void insertElemVec(Vec* vec, VecI at, Any val)
 
 template <class C> void                    tinsertElemIX  (C* col, typename C::iterator i, typename C::value_type elem) { col->insert(i, elem);                }
 template <class C> void                    teraseElemIX   (C* col, typename C::iterator i                             ) { col->erase (i      );                }
-template <class C> void                    tinsertElemIntX(C* col, int n, typename C::value_type elem                 ) { col->insert(col->begin() + n, elem); }
-template <class C> void                    teraseElemIntX (C* col, int n                                              ) { col->erase (col->begin() + n      ); }
+template <class C> void                    tinsertElemIntX(C* col, int64_t n, typename C::value_type elem                 ) { col->insert(col->begin() + n, elem); }
+template <class C> void                    teraseElemIntX (C* col, int64_t n                                              ) { col->erase (col->begin() + n      ); }
 template <class C> void                    tinsertRangeIX (C* col, typename C::iterator d, Any s0, Any s1             ) { col->insert(d, s0, s1);              }
 template <class C> void                    teraseRangeIX  (C* col, typename C::iterator i0, typename C::iterator i1   ) { col->erase (i0, i1);                 }
-template <class C> void                    tsetElemX      (C* col, int n, typename C::value_type elem                 ) { (*col)[n] = elem;                    }
-template <class C> typename C::value_type& tgetElem       (C* col, int n                                              ) { return (*col)[n];                    }
+template <class C> void                    tsetElemX      (C* col, int64_t n, typename C::value_type elem                 ) { (*col)[n] = elem;                    }
+template <class C> typename C::value_type& tgetElem       (C* col, int64_t n                                              ) { return (*col)[n];                    }
 template <class C> typename C::iterator    titerBegin     (C* col                                                     ) { return col->begin();                 }
 template <class C> typename C::iterator    titerEnd       (C* col                                                     ) { return col->end();                   }
 template <class C> C*                      tpushFrontX    (C* col, typename C::value_type elem                        ) { col->insert(col->begin(), elem); return col; }
@@ -653,8 +654,8 @@ TypeInfo* addContainer(bool textOps = true)
 
    return getTypeAdd<C>();
 
-   vector<int> x;
-   vector<int>::iterator i = x.begin();
+   vector<int64_t> x;
+   vector<int64_t>::iterator i = x.begin();
    i.operator++();
 
 }
@@ -667,8 +668,8 @@ TypeInfo* addContainer1()
    typedef typename C::const_iterator CI;
    typedef typename C::size_type      S;
 
-   typedef vector<int>::iterator (vector<int>::*InsertElem)(vector<int>::const_iterator, const int&);
-   //InsertElem f = &vector<int>::insert;
+   typedef vector<int64_t>::iterator (vector<int64_t>::*InsertElem)(vector<int64_t>::const_iterator, const int64_t&);
+   //InsertElem f = &vector<int64_t>::insert;
    //C c;
    //c.insert(0, 0);
    insertElemX .add((I   (C::*)(CI, const T&)      )&C::insert    );
@@ -777,7 +778,7 @@ Cons* mapCons(Any f, Cons* c)
    return res;
 }
 
-Any List::closureDeleg(Any* lambdaP, Any* params, int np)
+Any List::closureDeleg(Any* lambdaP, Any* params, int64_t np)
 {
    Vec vp(params, params + np);
    return List::apply(*lambdaP, &vp);
@@ -860,7 +861,7 @@ ostream& operator<<(ostream& Stream, Any any)
 }
 
 /*
-Array concatArrays(Any inp, int dim)
+Array concatArrays(Any inp, int64_t dim)
 {
 }
 */
@@ -898,7 +899,7 @@ void setup()
    addMember(&Frame::vars   , "vars");
    addMember(&Frame::context, "context");
 
-   addMember(&TypeInfo::args       , "args");
+   addMember(&TypeInfo::members       , "args");
    addMember(&TypeInfo::bases      , "bases");
    addMember(&TypeInfo::copyCon    , "copyCon");
    addMember(&TypeInfo::count      , "count");
@@ -938,10 +939,122 @@ void setup()
 
    tiInt   ->nKind = kSigned;
    tiInt64 ->nKind = kSigned;
-   tiInt   ->nKind = kUnsigned;
-   tiInt64 ->nKind = kUnsigned;
+   tiUInt  ->nKind = kUnsigned;
+   tiUInt64->nKind = kUnsigned;
    tiFloat ->nKind = kFloat;
    tiDouble->nKind = kFloat;
+
+   convert.useReturnT = true;
+   convert.useTable   = true;
+   convert.add(tconvert< int8_t ,  int8_t >);
+   convert.add(tconvert< int8_t ,  int16_t>);
+   convert.add(tconvert< int8_t ,  int32_t>);
+   convert.add(tconvert< int8_t ,  int64_t>);
+   convert.add(tconvert< int8_t , uint8_t >);
+   convert.add(tconvert< int8_t , uint16_t>);
+   convert.add(tconvert< int8_t , uint32_t>);
+   convert.add(tconvert< int8_t , uint64_t>);
+   convert.add(tconvert< int8_t , float   >);
+   convert.add(tconvert< int8_t , double  >);
+
+   convert.add(tconvert< int16_t ,  int8_t >);
+   convert.add(tconvert< int16_t ,  int16_t>);
+   convert.add(tconvert< int16_t ,  int32_t>);
+   convert.add(tconvert< int16_t ,  int64_t>);
+   convert.add(tconvert< int16_t , uint8_t >);
+   convert.add(tconvert< int16_t , uint16_t>);
+   convert.add(tconvert< int16_t , uint32_t>);
+   convert.add(tconvert< int16_t , uint64_t>);
+   convert.add(tconvert< int16_t , float   >);
+   convert.add(tconvert< int16_t , double  >);
+
+   convert.add(tconvert< int32_t ,  int8_t >);
+   convert.add(tconvert< int32_t ,  int16_t>);
+   convert.add(tconvert< int32_t ,  int32_t>);
+   convert.add(tconvert< int32_t ,  int64_t>);
+   convert.add(tconvert< int32_t , uint8_t >);
+   convert.add(tconvert< int32_t , uint16_t>);
+   convert.add(tconvert< int32_t , uint32_t>);
+   convert.add(tconvert< int32_t , uint64_t>);
+   convert.add(tconvert< int32_t , float   >);
+   convert.add(tconvert< int32_t , double  >);
+
+   convert.add(tconvert< int64_t ,  int8_t >);
+   convert.add(tconvert< int64_t ,  int16_t>);
+   convert.add(tconvert< int64_t ,  int32_t>);
+   convert.add(tconvert< int64_t ,  int64_t>);
+   convert.add(tconvert< int64_t , uint8_t >);
+   convert.add(tconvert< int64_t , uint16_t>);
+   convert.add(tconvert< int64_t , uint32_t>);
+   convert.add(tconvert< int64_t , uint64_t>);
+   convert.add(tconvert< int64_t , float   >);
+   convert.add(tconvert< int64_t , double  >);
+
+   convert.add(tconvert<uint8_t ,  int8_t >);
+   convert.add(tconvert<uint8_t ,  int16_t>);
+   convert.add(tconvert<uint8_t ,  int32_t>);
+   convert.add(tconvert<uint8_t ,  int64_t>);
+   convert.add(tconvert<uint8_t , uint8_t >);
+   convert.add(tconvert<uint8_t , uint16_t>);
+   convert.add(tconvert<uint8_t , uint32_t>);
+   convert.add(tconvert<uint8_t , uint64_t>);
+   convert.add(tconvert<uint8_t , float   >);
+   convert.add(tconvert<uint8_t , double  >);
+
+   convert.add(tconvert<uint16_t ,  int8_t >);
+   convert.add(tconvert<uint16_t ,  int16_t>);
+   convert.add(tconvert<uint16_t ,  int32_t>);
+   convert.add(tconvert<uint16_t ,  int64_t>);
+   convert.add(tconvert<uint16_t , uint8_t >);
+   convert.add(tconvert<uint16_t , uint16_t>);
+   convert.add(tconvert<uint16_t , uint32_t>);
+   convert.add(tconvert<uint16_t , uint64_t>);
+   convert.add(tconvert<uint16_t , float   >);
+   convert.add(tconvert<uint16_t , double  >);
+
+   convert.add(tconvert<uint32_t ,  int8_t >);
+   convert.add(tconvert<uint32_t ,  int16_t>);
+   convert.add(tconvert<uint32_t ,  int32_t>);
+   convert.add(tconvert<uint32_t ,  int64_t>);
+   convert.add(tconvert<uint32_t , uint8_t >);
+   convert.add(tconvert<uint32_t , uint16_t>);
+   convert.add(tconvert<uint32_t , uint32_t>);
+   convert.add(tconvert<uint32_t , uint64_t>);
+   convert.add(tconvert<uint32_t , float   >);
+   convert.add(tconvert<uint32_t , double  >);
+
+   convert.add(tconvert<uint64_t ,  int8_t >);
+   convert.add(tconvert<uint64_t ,  int16_t>);
+   convert.add(tconvert<uint64_t ,  int32_t>);
+   convert.add(tconvert<uint64_t ,  int64_t>);
+   convert.add(tconvert<uint64_t , uint8_t >);
+   convert.add(tconvert<uint64_t , uint16_t>);
+   convert.add(tconvert<uint64_t , uint32_t>);
+   convert.add(tconvert<uint64_t , uint64_t>);
+   convert.add(tconvert<uint64_t , float   >);
+   convert.add(tconvert<uint64_t , double  >);
+
+   convert.add(tconvert<float    ,  int8_t >);
+   convert.add(tconvert<float    ,  int16_t>);
+   convert.add(tconvert<float    ,  int32_t>);
+   convert.add(tconvert<float    ,  int64_t>);
+   convert.add(tconvert<float    , uint8_t >);
+   convert.add(tconvert<float    , uint16_t>);
+   convert.add(tconvert<float    , uint32_t>);
+   convert.add(tconvert<float    , uint64_t>);
+   convert.add(tconvert<float    , float   >);
+   convert.add(tconvert<float    , double  >);
+
+   convert.add(tconvert<double   ,  int8_t >);
+   convert.add(tconvert<double   ,  int16_t>);
+   convert.add(tconvert<double   ,  int32_t>);
+   convert.add(tconvert<double   ,  int64_t>);
+   convert.add(tconvert<double   , uint8_t >);
+   convert.add(tconvert<double   , uint16_t>);
+   convert.add(tconvert<double   , uint32_t>);
+   convert.add(tconvert<double   , uint64_t>);
+   convert.add(tconvert<double   , float   >);
+   convert.add(tconvert<double   , double  >);
 
    toTextAux.add(toTextCons);
    toTextAux.add(toTextBool);
@@ -960,11 +1073,12 @@ void setup()
    mequal.add(equalSymbol);
    mnotEqual.add(notEqualSymbol);
 
-   addContainer<vector<int> >()->setName("vector<int>");
-   tiVec = addContainer<vector<Any> >()->setName("vector<Any>");
-   addContainer<deque <int> >()->setName("deque<int>");
-   addContainer<deque <Var> >()->setName("deque<Var>");
+   addContainer<vector<int64_t>>()->setName("vector<int64_t>");
+   tiVec = addContainer<vector<Any>>()->setName("vector<Any>");
+   addContainer<deque <int64_t>>()->setName("deque<int64_t>");
+   addContainer<deque <Var>>()->setName("deque<Var>");
    addContainer<string      >(false)->setName("string");
+   addContainer<vector<Expr*>>()->setName("vector<Expr*>");
    addList();
 
    globalFrame = new Frame;
@@ -977,7 +1091,7 @@ void setup()
    addMathOps<int64_t>();
    addMathOps< double>();
    addMathOps<  float>();
-   addGlobal("set!"    , massign   );
+   addGlobal("="       , massign   );
    addGlobal("+"       , madd      );
    addGlobal("-"       , msubtract );
    addGlobal("*"       , mmultiply );
@@ -1004,7 +1118,7 @@ void setup()
    addGlobal("eraseElemX"  , eraseElemX  );
    addGlobal("getElem"     , getElem     );
    addGlobal("setElemX"    , setElemX    );
-   addGlobal("iterFront"   , iterBegin   );
+   addGlobal("iterBegin"   , iterBegin   );
    addGlobal("iterEnd"     , iterEnd     );
 
    addGlobal("++"          , append      );
@@ -1036,15 +1150,16 @@ void setup()
    toTextAux   .add(toTextAny);
    findCycles  .add(findCyclesAny);
    initParser2();
-   for (auto &p : typeMap)
-      p.second->doC3Lin();
 
-   for (auto &p : typeMap)
-      p.second->allocate();
+   for (auto p : typeMap) p.second->doC3Lin();
+
+   for (auto p : typeMap) p.second->allocate();
+
+   convert.buildTable();
 }
 
 /*
-int func(int a, int b)
+int64_t func(int64_t a, int64_t b)
 {
    return a + b;
 }
@@ -1053,9 +1168,9 @@ print func(2, 3);
 
 struct Func
 {
-   int a;
-   int b;
-   int operator()()
+   int64_t a;
+   int64_t b;
+   int64_t operator()()
    {
       return a + b;
    }

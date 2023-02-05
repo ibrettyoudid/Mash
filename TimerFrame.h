@@ -132,7 +132,7 @@ struct FuncInfo
    TimerMult            main;//time each thread spends in a func
    TimerThread<Timer>   tree;//time each thread spends in a func or funcs called by it
 
-   int         count;   //total number of calls
+   int64_t         count;   //total number of calls
    const char*       name;
    FuncInfo();
    void start();
