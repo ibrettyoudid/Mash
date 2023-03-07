@@ -953,7 +953,7 @@ bool isNum(Any a)
    return a.typeInfo == tiInt || a.typeInfo == tiInt64 || a.typeInfo == tiFloat || a.typeInfo == tiDouble;
 }
 
-Any List::closureDeleg(Any* lambdaP, Any* params, int64_t np)
+Any List::closureDeleg(Any* lambdaP, const Any** params, int64_t np)
 {
    Vec vp(params, params + np);
    return List::apply(*lambdaP, &vp);

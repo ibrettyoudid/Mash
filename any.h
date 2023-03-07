@@ -106,11 +106,11 @@ struct Any
    ~Any();
    Any call(Any* args, int64_t n);
    Any operator()();
-   Any operator()(Any arg0);
-   Any operator()(Any arg0, Any arg1);
-   Any operator()(Any arg0, Any arg1, Any arg2);
-   Any operator()(Any arg0, Any arg1, Any arg2, Any arg3);
-   Any operator()(Any arg0, Any arg1, Any arg2, Any arg3, Any arg4);
+   Any operator()(const Any &arg0);
+   Any operator()(const Any &arg0, const Any &arg1);
+   Any operator()(const Any &arg0, const Any &arg1, const Any &arg2);
+   Any operator()(const Any &arg0, const Any &arg1, const Any &arg2, const Any &arg3);
+   Any operator()(const Any &arg0, const Any &arg1, const Any &arg2, const Any &arg3, const Any &arg4);
    Any derp();
    //--------------------------------------------------------------------------- CONVERSION
    template <class To>   operator To&();
@@ -123,14 +123,14 @@ struct Any
    bool        isPtrTo   (TypeInfo* other);
    bool        isRefTo   (TypeInfo* other);
    bool        isPRTF    (TypeInfo* other);
-   int64_t         maxArgs   ();
-   int64_t         minArgs   ();
+   int64_t     maxArgs   ();
+   int64_t     minArgs   ();
    bool        callable  ();
    void        showhex   ();
    std::string hex       ();
-   int64_t         rDepth    ();
-   int64_t         pDepth    ();
-   int64_t         prDepth   ();
+   int64_t     rDepth    ();
+   int64_t     pDepth    ();
+   int64_t     prDepth   ();
    Any         add       (Member* m, Any value);
    Any         member    (Member* m);
    Any         member    (Symbol* symbol);
@@ -201,25 +201,25 @@ struct TypeInfo
    TypeConn         conv;
    TypePathList     layout;
 
-   void     (*copyCon )(void* res, void* in, TypeInfo* ti);//set in getTypeBase
-   void     (*destroy )(void* target);
-   Any      (*delegPtr)(Any* fp , Any* params, int64_t np);
+   void             (*copyCon )(void* res, void* in, TypeInfo* ti);//set in getTypeBase
+   void             (*destroy )(void* target);
+   Any              (*delegPtr)(Any* fp , const Any** params, int64_t np);
 
-   NKind    nKind;//Signed/unsigned/floating
+   NKind            nKind;//Signed/unsigned/floating
 
    bool             cpp;
    const type_info* cType;
 
-   bool     number;
-   bool     member;//member function or member pointer (memptrs are callable)
-   bool     multimethod;
+   bool             number;
+   bool             member;//member function or member pointer (memptrs are callable)
+   bool             multimethod;
 
-   int64_t      count;
+   int64_t          count;
    std::string      fullName;
 
    std::vector<std::vector<int64_t>> mmpindices;
 
-   TypeInfo(std::string name = "") : name(name), member(false), multimethod(false), of(nullptr), copyCon(nullptr), kind(kNormal)
+   TypeInfo(std::string name = "") : name(name), member(false), multimethod(false), of(nullptr), copyCon(nullptr), kind(kNormal), delegPtr(nullptr)
    {
    }
 
@@ -948,11 +948,11 @@ void addMember(R C::*ptr, std::string name)
 }
 
 template <class R, class C>
-Any delegPtrMem(Any* fp1, Any* params, int64_t n)
+Any delegPtrMem(Any* fp1, const Any** params, int64_t n)
 {
    R C::*pm(*fp1);
    std::cout << typeid(pm).name() << std::endl;
-   C* c(params[0]);
+   C* c(*params[0]);
    std::cout << "c type=" << typeid(c).name() << " value=" << c << std::endl;
    R& r(c->*pm);
    std::cout << "r type=" << typeid(r).name() << " address=" << &r << " value=" << r << std::endl;
@@ -980,7 +980,7 @@ struct getType<R C::*>
 
 void addMemberInterp(TypeInfo* _class, std::string name, TypeInfo* type);
 //--------------------------------------------------------------------------- void func()
-Any delegVoid0(Any* fp1, Any* params, int64_t n);
+Any delegVoid0(Any* fp1, const Any** params, int64_t n);
 
 //begin AnySpecs
 ///////////////////////////////////////////////////////////////////////////////// FUNCTIONS RETURNING VOID
@@ -998,10 +998,10 @@ struct getType<void (*)()>
 };
 
 template <class A0>
-Any delegVoid1(Any* fp1, Any* params, int64_t n)
+Any delegVoid1(Any* fp1, const Any** params, int64_t n)
 {
    void (*fp)(A0) = *fp1;
-   fp(params[0]);
+   fp(*params[0]);
    return Any(0);
 }
 template <class A0>
@@ -1019,10 +1019,10 @@ struct getType<void (*)(A0)>
 };
 
 template <class A0, class A1>
-Any delegVoid2(Any* fp1, Any* params, int64_t n)
+Any delegVoid2(Any* fp1, const Any** params, int64_t n)
 {
    void (*fp)(A0, A1) = *fp1;
-   fp(params[0], params[1]);
+   fp(*params[0], *params[1]);
    return Any(0);
 }
 template <class A0, class A1>
@@ -1041,10 +1041,10 @@ struct getType<void (*)(A0,A1)>
 };
 
 template <class A0, class A1, class A2>
-Any delegVoid3(Any* fp1, Any* params, int64_t n)
+Any delegVoid3(Any* fp1, const Any** params, int64_t n)
 {
    void (*fp)(A0, A1, A2) = *fp1;
-   fp(params[0], params[1], params[2]);
+   fp(*params[0], *params[1], *params[2]);
    return Any(0);
 }
 template <class A0, class A1, class A2>
@@ -1064,10 +1064,10 @@ struct getType<void (*)(A0,A1,A2)>
 };
 
 template <class A0, class A1, class A2, class A3>
-Any delegVoid4(Any* fp1, Any* params, int64_t n)
+Any delegVoid4(Any* fp1, const Any** params, int64_t n)
 {
    void (*fp)(A0, A1, A2, A3) = *fp1;
-   fp(params[0], params[1], params[2], params[3]);
+   fp(*params[0], *params[1], *params[2], *params[3]);
    return Any(0);
 }
 template <class A0, class A1, class A2, class A3>
@@ -1088,10 +1088,10 @@ struct getType<void (*)(A0,A1,A2,A3)>
 };
 
 template <class A0, class A1, class A2, class A3, class A4>
-Any delegVoid5(Any* fp1, Any* params, int64_t n)
+Any delegVoid5(Any* fp1, const Any** params, int64_t n)
 {
    void (*fp)(A0, A1, A2, A3, A4) = *fp1;
-   fp(params[0], params[1], params[2], params[3], params[4]);
+   fp(*params[0], *params[1], *params[2], *params[3], *params[4]);
    return Any(0);
 }
 template <class A0, class A1, class A2, class A3, class A4>
@@ -1114,7 +1114,7 @@ struct getType<void (*)(A0,A1,A2,A3,A4)>
 
 //////////////////////////////////////////////////////////////////////////////// FUNCTIONS
 template <class R>
-Any delegRes0(Any* fp1, Any* params, int64_t n)
+Any delegRes0(Any* fp1, const Any** params, int64_t n)
 {
    R (*fp)() = *fp1;
    return fp();
@@ -1134,10 +1134,10 @@ struct getType<R (*)()>
 };
 
 template <class R, class A0>
-Any delegRes1(Any* fp1, Any* params, int64_t n)
+Any delegRes1(Any* fp1, const Any** params, int64_t n)
 {
    R (*fp)(A0) = *fp1;
-   return fp(params[0]);
+   return fp(*params[0]);
 }
 template <class R, class A0>
 struct getType<R (*)(A0)>
@@ -1155,10 +1155,10 @@ struct getType<R (*)(A0)>
 };
 
 template <class R, class A0, class A1>
-Any delegRes2(Any* fp1, Any* params, int64_t n)
+Any delegRes2(Any* fp1, const Any** params, int64_t n)
 {
    R (*fp)(A0, A1) = *fp1;
-   return fp(params[0], params[1]);
+   return fp(*params[0], *params[1]);
 }
 template <class R, class A0, class A1>
 struct getType<R (*)(A0,A1)>
@@ -1177,10 +1177,10 @@ struct getType<R (*)(A0,A1)>
 };
 
 template <class R, class A0, class A1, class A2>
-Any delegRes3(Any* fp1, Any* params, int64_t n)
+Any delegRes3(Any* fp1, const Any** params, int64_t n)
 {
    R (*fp)(A0, A1, A2) = *fp1;
-   return fp(params[0], params[1], params[2]);
+   return fp(*params[0], *params[1], *params[2]);
 }
 template <class R, class A0, class A1, class A2>
 struct getType<R (*)(A0,A1,A2)>
@@ -1200,10 +1200,10 @@ struct getType<R (*)(A0,A1,A2)>
 };
 
 template <class R, class A0, class A1, class A2, class A3>
-Any delegRes4(Any* fp1, Any* params, int64_t n)
+Any delegRes4(Any* fp1, const Any** params, int64_t n)
 {
    R (*fp)(A0, A1, A2, A3) = *fp1;
-   return fp(params[0], params[1], params[2], params[3]);
+   return fp(*params[0], *params[1], *params[2], *params[3]);
 }
 template <class R, class A0, class A1, class A2, class A3>
 struct getType<R (*)(A0,A1,A2,A3)>
@@ -1224,10 +1224,10 @@ struct getType<R (*)(A0,A1,A2,A3)>
 };
 
 template <class R, class A0, class A1, class A2, class A3, class A4>
-Any delegRes5(Any* fp1, Any* params, int64_t n)
+Any delegRes5(Any* fp1, const Any** params, int64_t n)
 {
    R (*fp)(A0, A1, A2, A3, A4) = *fp1;
-   return fp(params[0], params[1], params[2], params[3], params[4]);
+   return fp(*params[0], *params[1], *params[2], *params[3], *params[4]);
 }
 template <class R, class A0, class A1, class A2, class A3, class A4>
 struct getType<R (*)(A0,A1,A2,A3,A4)>
@@ -1250,10 +1250,10 @@ struct getType<R (*)(A0,A1,A2,A3,A4)>
 
 //////////////////////////////////////////////////////////////////////////////// MEMBER FUNCTIONS RETURNING VOID
 template <class C>
-Any delegVoidClass0(Any* fp1, Any* params, int64_t n)
+Any delegVoidClass0(Any* fp1, const Any** params, int64_t n)
 {
    void (C::*fp)() = *fp1;
-   (params[0].as<C>().*fp)();
+   (*params[0].as<C>().*fp)();
    return Any(0);
 }
 template <class C>
@@ -1272,10 +1272,10 @@ struct getType<void (C::*)()>
 };
 
 template <class C, class A0>
-Any delegVoidClass1(Any* fp1, Any* params, int64_t n)
+Any delegVoidClass1(Any* fp1, const Any** params, int64_t n)
 {
    void (C::*fp)(A0) = *fp1;
-   (params[0].as<C>().*fp)(params[1]);
+   (*params[0].as<C>().*fp)(*params[1]);
    return Any(0);
 }
 template <class C, class A0>
@@ -1295,10 +1295,10 @@ struct getType<void (C::*)(A0)>
 };
 
 template <class C, class A0, class A1>
-Any delegVoidClass2(Any* fp1, Any* params, int64_t n)
+Any delegVoidClass2(Any* fp1, const Any** params, int64_t n)
 {
    void (C::*fp)(A0, A1) = *fp1;
-   (params[0].as<C>().*fp)(params[1], params[2]);
+   (*params[0].as<C>().*fp)(*params[1], *params[2]);
    return Any(0);
 }
 template <class C, class A0, class A1>
@@ -1319,10 +1319,10 @@ struct getType<void (C::*)(A0,A1)>
 };
 
 template <class C, class A0, class A1, class A2>
-Any delegVoidClass3(Any* fp1, Any* params, int64_t n)
+Any delegVoidClass3(Any* fp1, const Any** params, int64_t n)
 {
    void (C::*fp)(A0, A1, A2) = *fp1;
-   (params[0].as<C>().*fp)(params[1], params[2], params[3]);
+   (*params[0].as<C>().*fp)(*params[1], *params[2], *params[3]);
    return Any(0);
 }
 template <class C, class A0, class A1, class A2>
@@ -1344,10 +1344,10 @@ struct getType<void (C::*)(A0,A1,A2)>
 };
 
 template <class C, class A0, class A1, class A2, class A3>
-Any delegVoidClass4(Any* fp1, Any* params, int64_t n)
+Any delegVoidClass4(Any* fp1, const Any** params, int64_t n)
 {
    void (C::*fp)(A0, A1, A2, A3) = *fp1;
-   (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4]);
+   (*params[0].as<C>().*fp)(*params[1], *params[2], *params[3], *params[4]);
    return Any(0);
 }
 template <class C, class A0, class A1, class A2, class A3>
@@ -1370,10 +1370,10 @@ struct getType<void (C::*)(A0,A1,A2,A3)>
 };
 
 template <class C, class A0, class A1, class A2, class A3, class A4>
-Any delegVoidClass5(Any* fp1, Any* params, int64_t n)
+Any delegVoidClass5(Any* fp1, const Any** params, int64_t n)
 {
    void (C::*fp)(A0, A1, A2, A3, A4) = *fp1;
-   (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4], params[5]);
+   (*params[0].as<C>().*fp)(*params[1], *params[2], *params[3], *params[4], *params[5]);
    return Any(0);
 }
 template <class C, class A0, class A1, class A2, class A3, class A4>
@@ -1398,10 +1398,10 @@ struct getType<void (C::*)(A0,A1,A2,A3,A4)>
 
 //////////////////////////////////////////////////////////////////////////////// MEMBER FUNCTIONS
 template <class R, class C>
-Any delegResClass0(Any* fp1, Any* params, int64_t n)
+Any delegResClass0(Any* fp1, const Any** params, int64_t n)
 {
    R (C::*fp)() = *fp1;
-   return (params[0].as<C>().*fp)();
+   return (*params[0].as<C>().*fp)();
 }
 template <class R, class C>
 struct getType<R (C::*)()>
@@ -1420,10 +1420,10 @@ struct getType<R (C::*)()>
 };
 
 template <class R, class C, class A0>
-Any delegResClass1(Any* fp1, Any* params, int64_t n)
+Any delegResClass1(Any* fp1, const Any** params, int64_t n)
 {
    R (C::*fp)(A0) = *fp1;
-   return (params[0].as<C>().*fp)(params[1]);
+   return (*params[0].as<C>().*fp)(*params[1]);
 }
 template <class R, class C, class A0>
 struct getType<R (C::*)(A0)>
@@ -1443,10 +1443,10 @@ struct getType<R (C::*)(A0)>
 };
 
 template <class R, class C, class A0, class A1>
-Any delegResClass2(Any* fp1, Any* params, int64_t n)
+Any delegResClass2(Any* fp1, const Any** params, int64_t n)
 {
    R (C::*fp)(A0, A1) = *fp1;
-   return (params[0].as<C>().*fp)(params[1], params[2]);
+   return (*params[0].as<C>().*fp)(*params[1], *params[2]);
 }
 template <class R, class C, class A0, class A1>
 struct getType<R (C::*)(A0,A1)>
@@ -1467,10 +1467,10 @@ struct getType<R (C::*)(A0,A1)>
 };
 
 template <class R, class C, class A0, class A1, class A2>
-Any delegResClass3(Any* fp1, Any* params, int64_t n)
+Any delegResClass3(Any* fp1, const Any** params, int64_t n)
 {
    R (C::*fp)(A0, A1, A2) = *fp1;
-   return (params[0].as<C>().*fp)(params[1], params[2], params[3]);
+   return (*params[0].as<C>().*fp)(*params[1], *params[2], *params[3]);
 }
 template <class R, class C, class A0, class A1, class A2>
 struct getType<R (C::*)(A0,A1,A2)>
@@ -1492,10 +1492,10 @@ struct getType<R (C::*)(A0,A1,A2)>
 };
 
 template <class R, class C, class A0, class A1, class A2, class A3>
-Any delegResClass4(Any* fp1, Any* params, int64_t n)
+Any delegResClass4(Any* fp1, const Any** params, int64_t n)
 {
    R (C::*fp)(A0, A1, A2, A3) = *fp1;
-   return (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4]);
+   return (*params[0].as<C>().*fp)(*params[1], *params[2], *params[3], *params[4]);
 }
 template <class R, class C, class A0, class A1, class A2, class A3>
 struct getType<R (C::*)(A0,A1,A2,A3)>
@@ -1518,10 +1518,10 @@ struct getType<R (C::*)(A0,A1,A2,A3)>
 };
 
 template <class R, class C, class A0, class A1, class A2, class A3, class A4>
-Any delegResClass5(Any* fp1, Any* params, int64_t n)
+Any delegResClass5(Any* fp1, const Any** params, int64_t n)
 {
    R (C::*fp)(A0, A1, A2, A3, A4) = *fp1;
-   return (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4], params[5]);
+   return (*params[0].as<C>().*fp)(*params[1], *params[2], *params[3], *params[4], *params[5]);
 }
 template <class R, class C, class A0, class A1, class A2, class A3, class A4>
 struct getType<R (C::*)(A0,A1,A2,A3,A4)>
@@ -1546,10 +1546,10 @@ struct getType<R (C::*)(A0,A1,A2,A3,A4)>
 
 //////////////////////////////////////////////////////////////////////////////// CONST MEMBER FUNCTIONS RETURNING VOID
 template <class C>
-Any delegVoidConstClass0(Any* fp1, Any* params, int64_t n)
+Any delegVoidConstClass0(Any* fp1, const Any** params, int64_t n)
 {
    void (C::*fp)() const = *fp1;
-   (params[0].as<C>().*fp)();
+   (*params[0].as<C>().*fp)();
    return Any(0);
 }
 template <class C>
@@ -1568,10 +1568,10 @@ struct getType<void (C::*)() const>
 };
 
 template <class C, class A0>
-Any delegVoidConstClass1(Any* fp1, Any* params, int64_t n)
+Any delegVoidConstClass1(Any* fp1, const Any** params, int64_t n)
 {
    void (C::*fp)(A0) const = *fp1;
-   (params[0].as<C>().*fp)(params[1]);
+   (*params[0].as<C>().*fp)(*params[1]);
    return Any(0);
 }
 template <class C, class A0>
@@ -1591,10 +1591,10 @@ struct getType<void (C::*)(A0) const>
 };
 
 template <class C, class A0, class A1>
-Any delegVoidConstClass2(Any* fp1, Any* params, int64_t n)
+Any delegVoidConstClass2(Any* fp1, const Any** params, int64_t n)
 {
    void (C::*fp)(A0, A1) const = *fp1;
-   (params[0].as<C>().*fp)(params[1], params[2]);
+   (*params[0].as<C>().*fp)(*params[1], *params[2]);
    return Any(0);
 }
 template <class C, class A0, class A1>
@@ -1615,10 +1615,10 @@ struct getType<void (C::*)(A0,A1) const>
 };
 
 template <class C, class A0, class A1, class A2>
-Any delegVoidConstClass3(Any* fp1, Any* params, int64_t n)
+Any delegVoidConstClass3(Any* fp1, const Any** params, int64_t n)
 {
    void (C::*fp)(A0, A1, A2) const = *fp1;
-   (params[0].as<C>().*fp)(params[1], params[2], params[3]);
+   (*params[0].as<C>().*fp)(*params[1], *params[2], *params[3]);
    return Any(0);
 }
 template <class C, class A0, class A1, class A2>
@@ -1640,10 +1640,10 @@ struct getType<void (C::*)(A0,A1,A2) const>
 };
 
 template <class C, class A0, class A1, class A2, class A3>
-Any delegVoidConstClass4(Any* fp1, Any* params, int64_t n)
+Any delegVoidConstClass4(Any* fp1, const Any** params, int64_t n)
 {
    void (C::*fp)(A0, A1, A2, A3) const = *fp1;
-   (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4]);
+   (*params[0].as<C>().*fp)(*params[1], *params[2], *params[3], *params[4]);
    return Any(0);
 }
 template <class C, class A0, class A1, class A2, class A3>
@@ -1666,10 +1666,10 @@ struct getType<void (C::*)(A0,A1,A2,A3) const>
 };
 
 template <class C, class A0, class A1, class A2, class A3, class A4>
-Any delegVoidConstClass5(Any* fp1, Any* params, int64_t n)
+Any delegVoidConstClass5(Any* fp1, const Any** params, int64_t n)
 {
    void (C::*fp)(A0, A1, A2, A3, A4) const = *fp1;
-   (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4], params[5]);
+   (*params[0].as<C>().*fp)(*params[1], *params[2], *params[3], *params[4], *params[5]);
    return Any(0);
 }
 template <class C, class A0, class A1, class A2, class A3, class A4>
@@ -1694,10 +1694,10 @@ struct getType<void (C::*)(A0,A1,A2,A3,A4) const>
 
 //////////////////////////////////////////////////////////////////////////////// CONST MEMBER FUNCTIONS
 template <class R, class C>
-Any delegResConstClass0(Any* fp1, Any* params, int64_t n)
+Any delegResConstClass0(Any* fp1, const Any** params, int64_t n)
 {
    R (C::*fp)() const = *fp1;
-   return (params[0].as<C>().*fp)();
+   return (*params[0].as<C>().*fp)();
 }
 template <class R, class C>
 struct getType<R (C::*)() const>
@@ -1716,10 +1716,10 @@ struct getType<R (C::*)() const>
 };
 
 template <class R, class C, class A0>
-Any delegResConstClass1(Any* fp1, Any* params, int64_t n)
+Any delegResConstClass1(Any* fp1, const Any** params, int64_t n)
 {
    R (C::*fp)(A0) const = *fp1;
-   return (params[0].as<C>().*fp)(params[1]);
+   return (*params[0].as<C>().*fp)(*params[1]);
 }
 template <class R, class C, class A0>
 struct getType<R (C::*)(A0) const>
@@ -1739,10 +1739,10 @@ struct getType<R (C::*)(A0) const>
 };
 
 template <class R, class C, class A0, class A1>
-Any delegResConstClass2(Any* fp1, Any* params, int64_t n)
+Any delegResConstClass2(Any* fp1, const Any** params, int64_t n)
 {
    R (C::*fp)(A0, A1) const = *fp1;
-   return (params[0].as<C>().*fp)(params[1], params[2]);
+   return (*params[0].as<C>().*fp)(*params[1], *params[2]);
 }
 template <class R, class C, class A0, class A1>
 struct getType<R (C::*)(A0,A1) const>
@@ -1763,10 +1763,10 @@ struct getType<R (C::*)(A0,A1) const>
 };
 
 template <class R, class C, class A0, class A1, class A2>
-Any delegResConstClass3(Any* fp1, Any* params, int64_t n)
+Any delegResConstClass3(Any* fp1, const Any** params, int64_t n)
 {
    R (C::*fp)(A0, A1, A2) const = *fp1;
-   return (params[0].as<C>().*fp)(params[1], params[2], params[3]);
+   return (*params[0].as<C>().*fp)(*params[1], *params[2], *params[3]);
 }
 template <class R, class C, class A0, class A1, class A2>
 struct getType<R (C::*)(A0,A1,A2) const>
@@ -1788,10 +1788,10 @@ struct getType<R (C::*)(A0,A1,A2) const>
 };
 
 template <class R, class C, class A0, class A1, class A2, class A3>
-Any delegResConstClass4(Any* fp1, Any* params, int64_t n)
+Any delegResConstClass4(Any* fp1, const Any** params, int64_t n)
 {
    R (C::*fp)(A0, A1, A2, A3) const = *fp1;
-   return (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4]);
+   return (*params[0].as<C>().*fp)(*params[1], *params[2], *params[3], *params[4]);
 }
 template <class R, class C, class A0, class A1, class A2, class A3>
 struct getType<R (C::*)(A0,A1,A2,A3) const>
@@ -1814,10 +1814,10 @@ struct getType<R (C::*)(A0,A1,A2,A3) const>
 };
 
 template <class R, class C, class A0, class A1, class A2, class A3, class A4>
-Any delegResConstClass5(Any* fp1, Any* params, int64_t n)
+Any delegResConstClass5(Any* fp1, const Any** params, int64_t n)
 {
    R (C::*fp)(A0, A1, A2, A3, A4) const = *fp1;
-   return (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4], params[5]);
+   return (*params[0].as<C>().*fp)(*params[1], *params[2], *params[3], *params[4], *params[5]);
 }
 template <class R, class C, class A0, class A1, class A2, class A3, class A4>
 struct getType<R (C::*)(A0,A1,A2,A3,A4) const>
@@ -1959,7 +1959,7 @@ struct Multimethod : public MMBase
    Multimethod(std::string _name = "") : MMBase(_name)
    {
    }
-   R call(Any* args, int64_t nargs)
+   R call(const Any** args, int64_t nargs)
    {
       Any* addr = getMethod(args, nargs);
       if (useReturnT)
@@ -1967,18 +1967,19 @@ struct Multimethod : public MMBase
       else
          return addr->call(args, nargs);
    }
-   R operator()(Any arg0)
+   R operator()(const Any& arg0)
    {
+      const Any* args[1] = { &arg0 };
       return call(&arg0, 1);
    }
-   R operator()(Any arg0, Any arg1)
+   R operator()(const Any& arg0, const Any& arg1)
    {
-      Any args[2] = { arg0, arg1 };
+      const Any* args[2] = { &arg0, &arg1 };
       return call(args, 2);
    }      
-   R operator()(Any arg0, Any arg1, Any arg2)
+   R operator()(const Any& arg0, const Any& arg1, const Any& arg2)
    {
-      Any args[3] = { arg0, arg1, arg2 };
+      const Any* args[3] = { &arg0, &arg1, &arg2 };
       return call(args, 3);
    }
 };
@@ -2056,12 +2057,12 @@ struct getType<MMBase>
 };
 
 template <class R>
-Any delegMM(Any* mm, Any* args, int64_t n)
+Any delegMM(Any* mm, const Any** args, int64_t n)
 {
    return mm->as<Multimethod<R>>().call(args, n);
 }
 
-Any delegMMV(Any* mm, Any* args, int64_t n);
+Any delegMMV(Any* mm, const Any** args, int64_t n);
 
 template <class R>
 struct getType<Multimethod<R>>
@@ -2094,12 +2095,12 @@ struct getType<Multimethod<void>>
 };
 
 template <class R>
-Any delegMMP(Any* mm, Any* args, int64_t n)
+Any delegMMP(Any* mm, const Any** args, int64_t n)
 {
    return mm->as<Multimethod<R>*>()->call(args, n);
 }
 
-Any delegMMPV(Any* mm, Any* args, int64_t n);
+Any delegMMPV(Any* mm, const Any** args, int64_t n);
 
 template <class R>
 struct getType<Multimethod<R>*>
@@ -2148,7 +2149,7 @@ struct PartApply
 {
    int64_t pArgsFixed;
    std::vector<Any> argsFixed;
-   Any      (*delegPtr)(Any* fp , Any* params, int64_t np);
+   Any      (*delegPtr)(Any* fp , const Any** params, int64_t np);
 };
 
 PartApply* makePartApply(Any f, Any a0);
@@ -2226,7 +2227,7 @@ namespace List
       Closure(Any params, Any body, Frame* context = nullptr);
    };
 
-   Any closureDeleg(Any* closure, Any* params, int64_t np);
+   Any closureDeleg(Any* closure, const Any** params, int64_t np);
 }
 
 namespace Struct

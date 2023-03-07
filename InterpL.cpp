@@ -319,24 +319,24 @@ void InterpL::apply(Any func, Vec* a)
 
       if (func.typeInfo == tiListClosure)
       {
-         Closure* lambda = func;
+         Closure* closure = func;
 
          Frame* newenv = new Frame;
-         newenv->context  = lambda->context;
+         newenv->context  = closure->context;
 
          int64_t na = args.size();
-         int64_t np = lambda->params.size();
+         int64_t np = closure->params.size();
          for (size_t i = 0; i < na; ++i)
-            newenv->vars.push_back(Var(lambda->params[i].name, args[i]));
+            newenv->vars.push_back(Var(closure->params[i].name, args[i]));
 
-         push(cons(getSymbol("begin"), lambda->body), newenv);
+         push(cons(getSymbol("begin"), closure->body), newenv);
       }
       else
          pushR(func.call(&*args.begin(), min(nArgs, maxArgs)));
       return;
    }
 
-   Closure* result = new Closure;  //lambda for missing members
+   Closure* result = new Closure;  //closure for missing members
    Frame*  newEnv = new Frame;   //frame for existing members
    if (lambda)
    {
@@ -349,7 +349,7 @@ void InterpL::apply(Any func, Vec* a)
             newEnv->vars.push_back(Var(lambda->params[i].name, args[i]));
 
       result->minArgs  = result->maxArgs = result->params.size();
-      result->body       = lambda->body;
+      result->body     = lambda->body;
       result->context = newEnv;
    }
    else
@@ -702,7 +702,7 @@ Any apply1(Any func, Vec* a)
 
       args.erase(args.begin(), args.begin() + maxArgs);
    }
-   Closure* result = new Closure;  //lambda for missing members
+   Closure* result = new Closure;  //closure for missing members
    Frame*  newEnv = new Frame;   //frame for existing members
    if (closure)
    {
@@ -749,7 +749,7 @@ Any apply1(Any func, Vec* a)
       if (!lambda) lambda = createLambda(func, nArgs);
 
       Frame*  newEnv = new Frame;   //frame for existing members
-      Closure* result = new Closure;  //lambda for blank members
+      Closure* result = new Closure;  //closure for blank members
 
       for (size_t i = 0; i < nArgs; ++i)
          if (members[i].typeInfo == tiSymbol && members[i] == symblankArg)

@@ -28,20 +28,20 @@ void addTypeLinkConv(TypeInfo* base, TypeInfo* derived)
    derived->conv.bases.push_back(tl);
 }
 
-Any delegVoid0(Any* fp1, Any* params, int64_t n)
+Any delegVoid0(Any* fp1, const Any** params, int64_t n)
 {
    void (*fp)() = *fp1;
    fp();
    return Any(0);
 }
 
-Any delegMMPV(Any* mm, Any* args, int64_t n)
+Any delegMMPV(Any* mm, const Any** args, int64_t n)
 {
    mm->as<Multimethod<void>*>()->call(args, n);
    return 0;
 }
 
-Any delegMMV(Any* mm, Any* args, int64_t n)
+Any delegMMV(Any* mm, const Any** args, int64_t n)
 {
    mm->as<Multimethod<void>>().call(args, n);
    return 0;
@@ -204,36 +204,40 @@ Any::~Any()
 {
    delete[] static_cast<char*>(ptr);
 }
+Any call(Any* f, Any* args, int64_t n)
+{
+}
 Any Any::call(Any* args, int64_t n)
 {
+   if (n < minArgs())
    return typeInfo->delegPtr(this, args, n);
 }
 Any Any::operator()()
 {
    return typeInfo->delegPtr(this, nullptr, 0);
 }
-Any Any::operator()(Any arg0)
+Any Any::operator()(const Any &arg0)
 {
    return typeInfo->delegPtr(this, &arg0, 1);
 }
-Any Any::operator()(Any arg0, Any arg1)
+Any Any::operator()(const Any &arg0, const Any &arg1)
 {
-   Any args[2] = { arg0, arg1 };
+   const Any *args[2] = { &arg0, &arg1 };
    return typeInfo->delegPtr(this, args, 2);
 }
-Any Any::operator()(Any arg0, Any arg1, Any arg2)
+Any Any::operator()(const Any &arg0, const Any &arg1, const Any &arg2)
 {
-   Any args[3] = { arg0, arg1, arg2 };
+   const Any *args[3] = { &arg0, &arg1, &arg2 };
    return typeInfo->delegPtr(this, args, 3);
 }
-Any Any::operator()(Any arg0, Any arg1, Any arg2, Any arg3)
+Any Any::operator()(const Any &arg0, const Any &arg1, const Any &arg2, const Any &arg3)
 {
-   Any args[4] = { arg0, arg1, arg2, arg3 };
+   const Any *args[4] = { &arg0, &arg1, &arg2, &arg3 };
    return typeInfo->delegPtr(this, args, 4);
 }
-Any Any::operator()(Any arg0, Any arg1, Any arg2, Any arg3, Any arg4)
+Any Any::operator()(const Any &arg0, const Any &arg1, const Any &arg2, const Any &arg3, const Any &arg4)
 {
-   Any args[5] = { arg0, arg1, arg2, arg3, arg4 };
+   const Any *args[5] = { &arg0, &arg1, &arg2, &arg3, &arg4 };
    return typeInfo->delegPtr(this, args, 5);
 }
 //--------------------------------------------------------------------------- CONVERSION
@@ -277,7 +281,8 @@ bool Any::isPRTF(TypeInfo* other)
 }
 bool Any::callable()
 {
-   return typeInfo == tiListClosure || typeInfo == tiStructClosure || typeInfo == tiVarFunc || typeInfo->multimethod || typeInfo->kind == kFunction;
+   //return typeInfo == tiListClosure || typeInfo == tiStructClosure || typeInfo == tiVarFunc || typeInfo->multimethod || typeInfo->kind == kFunction;
+   return typeInfo->delegPtr;
 }
 
 int64_t Any::maxArgs()
@@ -287,13 +292,13 @@ int64_t Any::maxArgs()
    else if (typeInfo == tiVarFunc)
       return as<VarFunc>().maxArgs;
    else if (typeInfo->multimethod)
-      return ((MMBase&)*this).minArgs;
+      return ((MMBase&)*this).maxArgs;
    else if (typeInfo->kind == kFunction)
       return typeInfo->members.size();
    else
    {
       cout << "maxArgs called for non-function" << endl;
-      cout << typeInfo->fullName << endl;
+      cout << typeInfo->getName() << endl;
       throw "maxArgs called for non-function";
    }
 }
@@ -311,7 +316,7 @@ int64_t Any::minArgs()
    else
    {
       cout << "minArgs called for non-function" << endl;
-      cout << typeInfo->fullName << endl;
+      cout << typeInfo->getName() << endl;
       cout.flush();
       throw "minArgs called for non-function";
    }
@@ -774,15 +779,15 @@ MissingArg mA;
 
 Any delegPartApply(Any* cl, Any* argsVar, int64_t n)
 {
-   PartApply* clos = *cl;
-   size_t nArgsAll = clos->argsFixed.size() + n;
+   PartApply* partApply = *cl;
+   size_t nArgsAll = partApply->argsFixed.size() + n;
    Any* argsAll = new Any[nArgsAll];
    size_t afi = 0;
    size_t avi = 0;
    for (size_t aai = 0; aai < nArgsAll; ++aai)
    {
-      if (clos->pArgsFixed & (1 << aai))
-         argsAll[aai] = clos->argsFixed[afi++];
+      if (partApply->pArgsFixed & (1 << aai))
+         argsAll[aai] = partApply->argsFixed[afi++];
       else
          argsAll[aai] = argsVar[avi++];
    }
