@@ -1,13 +1,11 @@
 // Copyright (c) 2023 Brett Curtis
-// main.cpp : Defines the entry point for the console application.
-//
 
 #include "stdafx.h"
-#include "InterpL.h"
 #include "classes.h"
 #include "Parser.h"
 #include "Parser2.h"
 #include "TimerFrame.h"
+#include "InterpL.h"
 
 using namespace std;
 
@@ -30,28 +28,6 @@ namespace List
 {
 
 Any evalMulti(Any expr, Frame* env);
-
-struct InterpL
-{
-   Frame*   stack;
-   Cons*    results;
-
-            InterpL  () : stack(nullptr), results(nullptr) {}
-
-
-   void     push     (Frame* newFrame);
-   void     push     (Any expr, Frame* env);
-   void     push     (Vec* todo, Frame* env);
-   Frame*   pop      ();
-   void     pushR    (Any val);
-   Any      popR     ();
-   void     evalStep ();
-   void     evalStep1();
-   Any      eval     (Any expr, Frame* env);
-   void     apply    (Any func, Vec* a);
-
-};
-
 
 void InterpL::push(Frame* newFrame)
 {
@@ -839,81 +815,49 @@ void testConv4(int64_t i)
    cout << i << endl;
 }
 
-#ifdef __linux__
-int main(int argc, char* argv[])
-#else
-int _tmain(int argc, _TCHAR* argv[])
-#endif
-{
-   int64_t local = 0;
-   int64_t* newint = new int64_t(55);
-   Any anewint(&newint);
-   testConv1(anewint);
-   testConv2(anewint);
-   testConv3(anewint);
-   testConv4(anewint);
-   wcout << L"global = " << &global << endl;
-   wcout << L"local  = " << &local  << endl;
-   wcout << L"param  = " << &argc   << endl;
-   wcout << L"newint = " << newint  << endl;
+/*
+int64_t local = 0;
+int64_t* newint = new int64_t(55);
+Any anewint(&newint);
+testConv1(anewint);
+testConv2(anewint);
+testConv3(anewint);
+testConv4(anewint);
+wcout << L"global = " << &global << endl;
+wcout << L"local  = " << &local  << endl;
+wcout << L"param  = " << &argc   << endl;
+wcout << L"newint = " << newint  << endl;
 
-   typeidTest* t  = new typeidTest2;
-   typeidTest  ta = *t;
-   typeidTest& tb = *t;
-   cout << typeid( t).name() << endl;//gives static type
-   cout << typeid(*t).name() << endl;//gives dynamic type
-   cout << typeid(ta).name() << endl;//gives static type (not surprisingly)
-   cout << typeid(tb).name() << endl;//gives dynamic type
- 
-   setup();
-   cout << endl;
-   Any a = makePartApply(testFunc, 10ll);
-   cout << a << endl;
-   cout << a(5ll) << endl;
+typeidTest* t  = new typeidTest2;
+typeidTest  ta = *t;
+typeidTest& tb = *t;
+cout << typeid( t).name() << endl;//gives static type
+cout << typeid(*t).name() << endl;//gives dynamic type
+cout << typeid(ta).name() << endl;//gives static type (not surprisingly)
+cout << typeid(tb).name() << endl;//gives dynamic type
 
-   testFuncArgs(17ll);
+cout << endl;
+Any a = makePartApply(testFunc, 10ll);
+cout << a << endl;
+cout << a(5ll) << endl;
 
-   parser.lang = &scheme;
-   List::InterpL interp;
-   Frame* userFrame = new Frame;
-//   cout << toTextAny(userFrame) << endl;
-   userFrame->context = globalFrame;
-   Var v("testvar", 5);
-   cout << " Var                 : " << toTextAny(v) << endl;
-   cout << "&globalFrame->context: " << (int64_t*)&globalFrame->context << endl;
-   cout << "&globalFrame->context: typeid=" << typeid(&globalFrame->context).name() << endl;
-   cout << "&globalFrame->context: " << toTextAny(&globalFrame->context) << endl;
-   cout << " globalFrame->context: " << toTextAny(globalFrame->context) << endl;
-   cout << "&globalFrame->vars   : " << toTextAny(&globalFrame->vars) << endl;
-   cout << " globalFrame         : " << toTextAny(globalFrame) << endl;
+testFuncArgs(17ll);
 
-   cout << "INT_MAX=" << INT_MAX << endl;
-   cout << "sizeof(int64_t)=" << sizeof(int64_t) << endl;
-   cout << "sizeof(size_t)=" << sizeof(size_t) << endl;
+Var v("testvar", 5);
+cout << " Var                 : " << toTextAny(v) << endl;
+cout << "&globalFrame->context: " << (int64_t*)&globalFrame->context << endl;
+cout << "&globalFrame->context: typeid=" << typeid(&globalFrame->context).name() << endl;
+cout << "&globalFrame->context: " << toTextAny(&globalFrame->context) << endl;
+cout << " globalFrame->context: " << toTextAny(globalFrame->context) << endl;
+cout << "&globalFrame->vars   : " << toTextAny(&globalFrame->vars) << endl;
+cout << " globalFrame         : " << toTextAny(globalFrame) << endl;
 
-   cout << getTypeAdd<int64_t[100]>() << endl;
-   //cout << getTypeAdd<int64_t[]>() << endl;
+cout << "INT_MAX=" << INT_MAX << endl;
+cout << "sizeof(int64_t)=" << sizeof(int64_t) << endl;
+cout << "sizeof(size_t)=" << sizeof(size_t) << endl;
 
-   cout << convert(getTypeAdd<int>(), 32.4) << endl;
-   for (;;)
-   {
-      cout << "\033[32mscheme>\033[0m ";
-      cout.flush();
-      char inputChars[1000];
-      cin.getline(inputChars, 1000);
-      string input(inputChars);
-#if 1
-      parse(expr, input);
-#else
-      Any expr = parser.setProgram(input)->initUnit()->parseSExpr();//parser.setProgram(user)->initUnit()->parseExpr();
-      List::compile(expr, userFrame);
-      cout << expr << endl;
+cout << getTypeAdd<int64_t[100]>() << endl;
+//cout << getTypeAdd<int64_t[]>() << endl;
 
-      Any res = List::eval(expr, userFrame);
-      cout << res << endl;
-      cout << toText(res.typeInfo) << endl;
-#endif
-   }
-   cin.get();
-   return 0;
-}
+cout << convert(getTypeAdd<int>(), 32.4) << endl;
+*/

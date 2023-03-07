@@ -39,16 +39,16 @@ struct LessVarName
 
 struct VarList
 {
-   std::set  <Var*, LessVarName> byName;
+   std::set  <Var*, LessVarName> forwardTo;
    std::deque<Var*> byOffset;
 
    Var* add(Var& v)
    {
-      auto i = byName.find(&v);
-      if (i == byName.end())
+      auto i = forwardTo.find(&v);
+      if (i == forwardTo.end())
       {
          Var* vp = new Var(v);
-         byName.insert(vp);
+         forwardTo.insert(vp);
          byOffset.push_back(vp);
          return vp;
       }
@@ -76,17 +76,25 @@ struct SymbolData
             SymbolData(std::string name, int64_t id = -1) : name(name), id(id) {}
 };
 
+//MEANT TO BE A FUCKING WARNING NOT AN ERROR
+#define _SILENCE_CXX17_ITERATOR_BASE_CLASS_DEPRECATION_WARNING
+
 template <class T>
 struct NumberRange
 {
    typedef T value_type;
-   struct const_iterator : public std::iterator <std::random_access_iterator_tag, T>
+   struct const_iterator
    {
+      typedef std::random_access_iterator_tag iterator_category;
+      typedef T   value_type;
+      typedef int difference_type;
+      typedef T*  pointer;
+      typedef T&  reference;
       T i;
       T step;
 
       const_iterator(T i, T step = 1) : i(i), step(step) { }
-      const value_type& operator* (     ) { return i; }
+      value_type&       operator* (     ) { return i; }
       value_type        operator[](int64_t n) { return i + n * step; }
       const_iterator&   operator++(     ) { i += step; return *this; }
       const_iterator&   operator--(     ) { i -= step; return *this; }
@@ -116,6 +124,31 @@ struct NumberRange
    const_iterator cend  () { return const_iterator(e, step); }
    T operator[](T i) { return b + i * step; }
 };
+
+struct Compose
+{
+   Any f;
+   Any g;
+
+   Compose(Any f, Any g) : f(f), g(g) {}
+};
+
+Any delegCompose(Any* _compose, Any* args, int64_t n);
+
+template <>
+struct getType<Compose*>
+{
+   static TypeInfo info()
+   {
+      TypeInfo fti(getTypeBase<Compose*>());
+      //for (size_t i = 0; i < mm.nargs; ++i)
+      //   fti.members.add(getTypeAdd<Any>());
+      fti.delegPtr = delegCompose;
+      return fti;
+   }
+};
+
+Compose* compose(Any f, Any g);
 /*
    Symbol* temp = getSymbol(name);
    auto res = symbols.insert(temp);
@@ -139,9 +172,9 @@ struct VarRef
 extern Symbol *symBlankArg;
 extern Cons   *nil;
 
-extern MultimethodAny       convert;
-extern MultimethodAny       pushBack   ;
-extern MultimethodAny       insertElemX;
+extern Multimethod<Any>  convert    ;
+extern Multimethod<Any>  pushBack   ;
+extern Multimethod<void> insertElemX;
 
 extern TypeInfo* tiAny     ;
 extern TypeInfo* tiSymbol  ;
@@ -160,11 +193,11 @@ extern TypeInfo* tiVec     ;
 
 extern Frame*    globalFrame;
 
-std::string toText      (Any a         , int64_t max = INT_MAX);
-std::string toTextInt   (int64_t n         , int64_t max = INT_MAX);
-std::string toTextIntR  (int64_t& n        , int64_t max = INT_MAX);
-std::string toTextTypeInfo(TypeInfo* ti, int64_t max = INT_MAX);
-std::string toTextAny   (Any a         , int64_t max = INT_MAX);
+std::string toText        (Any a       , int64_t max = LLONG_MAX);
+std::string toTextInt     (int64_t n   , int64_t max = LLONG_MAX);
+std::string toTextIntR    (int64_t&    , int64_t max = LLONG_MAX);
+std::string toTextTypeInfo(TypeInfo* ti, int64_t max = LLONG_MAX);
+std::string toTextAny     (Any a       , int64_t max = LLONG_MAX);
 
 void        setup       ();
 Cons*       mylist      ();
@@ -172,7 +205,7 @@ Cons*       mylist      (Any i0);
 Cons*       mylist      (Any i0, Any i1);
 Cons*       mylist      (Any i0, Any i1, Any i2);
 Cons*       mylist      (Any i0, Any i1, Any i2, Any i3);
-int64_t         lengthCons  (Cons* c);
+int64_t     lengthCons  (Cons* c);
 Any&        car         (Cons* c);
 Any&        cdr         (Cons* c);
 Any&        first       (Cons* c);

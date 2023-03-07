@@ -4,7 +4,7 @@
 #include "Parser.h"
 #include "Parser2.h"
 #include "InterpL.h"
-//#include "io.h"
+#include <io.h>
 
 using namespace std;
 
@@ -25,35 +25,38 @@ Symbol* getSymbol(string name, int64_t group, int64_t id)
 }
 Cons* nil = nullptr;
 
-MultimethodAny       convert     ("convert");
-MultimethodAny       massign     ("assign");
-Multimethod<string>  toTextAux   ("toTextAux");
-Multimethod<void>    findCycles  ("findCycles");
-MultimethodAny       pushBack    ;
-MultimethodAny       insertElemX ;
-MultimethodAny       eraseElemX  ;
-MultimethodAny       getElem     ;
-MultimethodAny       setElemX    ;
-MultimethodAny       iterBegin   ;
-MultimethodAny       iterEnd     ;
+Multimethod<Any>    convert     ("convert");
+Multimethod<Any>    massign     ("assign");
+Multimethod<string> toTextAux   ("toTextAux");
+Multimethod<void>   findCycles  ("findCycles");
+Multimethod<Any>    pushBack    ("pushBack");
+Multimethod<void>   insertElemX ("insertElemX");
+Multimethod<void>   eraseElemX  ("eraseElemX");
+Multimethod<Any>    getElem     ("getElem");
+Multimethod<void>   setElemX    ("setElemX");
+Multimethod<Any>    iterBegin   ("iterBegin");
+Multimethod<Any>    iterEnd     ("iterEnd");
 
-MultimethodAny       append      ;
-MultimethodAny       fold        ;
+Multimethod<Any>    append      ("append");
+Multimethod<Vec>    mtoVec      ("toVec");
+Multimethod<Any>    mfromVec    ("fromVec");
+Multimethod<Any>    fold        ("fold");
+Multimethod<Any>    mmap        ("map");
 
-MultimethodAny       mderef      ;
-MultimethodAny       minc        ;
-MultimethodAny       mdec        ;
-Multimethod<int64_t>     length      ;
-MultimethodAny       madd        ;
-MultimethodAny       msubtract   ;
-MultimethodAny       mmultiply   ;
-MultimethodAny       mdivide     ;
-Multimethod<bool>    mless       ;
-Multimethod<bool>    mlessEqual  ;
-Multimethod<bool>    mmore       ;
-Multimethod<bool>    mmoreEqual  ;
-Multimethod<bool>    mequal      ;
-Multimethod<bool>    mnotEqual   ;
+Multimethod<Any>    mderef      ("deref");
+Multimethod<Any>    minc        ("inc");
+Multimethod<Any>    mdec        ("dec");
+Multimethod<size_t> length      ("length");
+Multimethod<Any>    madd        ("+");
+Multimethod<Any>    msubtract   ("-");
+Multimethod<Any>    mmultiply   ("*");
+Multimethod<Any>    mdivide     ("/");
+Multimethod<bool>   mless       ("<");
+Multimethod<bool>   mlessEqual  ("<=");
+Multimethod<bool>   mmore       (">");
+Multimethod<bool>   mmoreEqual  (">=");
+Multimethod<bool>   mequal      ("==");
+Multimethod<bool>   mnotEqual   ("!=");
 
 bool operator==(Any a, Any b) { return mequal(a, b); }
 bool operator!=(Any a, Any b) { return mnotEqual(a, b); }
@@ -67,12 +70,14 @@ TypeInfo* tiCons    ;
 TypeInfo* tiChar    ;
 TypeInfo* tiInt8    ;
 TypeInfo* tiInt16   ;
-TypeInfo* tiInt     ;
+TypeInfo* tiInt32   ;
 TypeInfo* tiInt64   ;
+TypeInfo* tiInt     ;
 TypeInfo* tiUInt8   ;
 TypeInfo* tiUInt16  ;
-TypeInfo* tiUInt    ;
+TypeInfo* tiUInt32  ;
 TypeInfo* tiUInt64  ;
+TypeInfo* tiUInt    ;
 TypeInfo* tiFloat   ;
 TypeInfo* tiDouble  ;
 TypeInfo* tiSigned  ;
@@ -421,12 +426,12 @@ string toTextCons(Cons* c, int64_t max)
       if (a.typeInfo == tiCons)
       {
          c = a;
-         result += " "+toTextAux(c->car, max);
+         result += TS+" "+toTextAux(c->car, max);
          a = c->cdr;
       }
       else
       {
-         result += " . "+toTextAux(a, max)+")";
+         result += TS+" . "+toTextAux(a, max)+")";
          return result;
       }
    }
@@ -489,14 +494,14 @@ string toTextTypeInfo(TypeInfo* ti, int64_t max)
    if (ti->of)
       result += TS+"   of = "+indent(toTextTypeInfo(ti->of), 3);
    for (size_t i = 0; i < ti->members.size(); ++i)
-      result += TS+"   arg["+i+"] = "+indent(toTextTypeInfo(ti->members[i]->typeInfo), 3);
-   if (ti->linear.size())
+//      result += TS+"   arg["+i+"] = "+indent(toTextTypeInfo(ti->members[i]->typeInfo), 3);
+   if (ti->main.linear.size())
    {
       result += TS+"   linear = ";
-      for (size_t i = 0; i < ti->linear.size(); ++i)
+      for (size_t i = 0; i < ti->main.linear.size(); ++i)
       {
          if (i > 0) result += ", ";
-         result += ti->linear[i]->name;
+         result += ti->main.linear[i]->name;
       }
    }
    result += "}\n";
@@ -509,22 +514,155 @@ string toTextFrame(Frame* f, int64_t max)
       return "nullptr";
    else if (f == globalFrame)
       return "global";
-   else if (f == (Frame*)0xCDCDCDCD)
-      return "0xCDCDCDCD";
+   else if (f == (Frame*)0xCDCDCDCDCDCDCDCD)
+      return "0xCDCDCDCDCDCDCDCD";
    else if (f->visible)
       return TS+"Frame { "+toTextAny(f, max)+" }";
    else
       return TS+"HiddenFrame";
 }
 
-string toTextMultimethod(MultimethodAny m, int64_t max)
-{
-   return TS+"Multimethod("+m.name+")";
-}
-
 string toTextVar(Var v, int64_t max)
 {
    return TS+v.name+" = "+toText(v.value, max);
+}
+
+string toTextArray(Array<string>& array, int64_t max)
+{
+   Array<size_t> cellLengths;
+   Array<size_t> cellHeights;
+   vector<size_t> colWidths(array.sizes[0], 1);
+   vector<size_t> rowHeights(array.sizes[1]);
+   cellLengths.sizes = array.sizes;
+   cellHeights.sizes = array.sizes;
+   cellLengths.alloc();
+   cellHeights.alloc();
+   size_t* cellLength = cellLengths.begin();
+   for (auto &cellString : array)
+      *cellLength++ = cellString.size();
+   size_t* cellHeight = cellHeights.begin();
+   for (auto &cellLength : cellLengths)
+      *cellHeight++ = cellLength;
+   for (int64_t y = 0; y < array.sizes[1]; ++y)
+   {
+      int64_t maxh = 0;
+      for (int64_t x = 0; x < array.sizes[0]; ++x)
+      {
+         //int64_t h1 = (cellLengths({maxx, y}) + colWidths[maxx] - 1) / colWidths[maxx];
+         //cellHeights({x, y}) = h1;
+         int64_t h1 = cellHeights[{x, y}];
+         if (h1 > maxh)
+            maxh = h1;
+      }
+      rowHeights[y] = maxh;
+   }
+   max -= array.sizes[0];
+   for (int64_t i = array.sizes[0]; i < max; ++i)
+   {
+      vector<int64_t> total(array.sizes[0], 0);
+      for (int64_t y = 0; y < array.sizes[1]; ++y)
+      {
+         int64_t maxh = 0;
+         for (int64_t x = 0; x < array.sizes[0]; ++x)
+         {
+            int64_t h1 = cellHeights[{x, y}];
+            if (h1 > maxh)
+               maxh = h1;
+         }
+         if (maxh > 1)
+            for (int64_t x = 0; x < array.sizes[0]; ++x)
+               if (cellHeights[{x, y}] >= maxh) ++total[x];
+      }
+      int64_t maxt = 0;
+      int64_t maxx = -1;
+      for (int64_t x = 0; x < array.sizes[0]; ++x)
+      {
+         int64_t t1 = total[x];
+         if (t1 > maxt)
+         {
+            maxt = t1;
+            maxx = x;
+         }
+      }
+      if (maxx >= 0)
+         ++colWidths[maxx];
+      else
+         break;
+      for (int64_t y = 0; y < array.sizes[1]; ++y)
+      {
+         cellHeights[{maxx, y}] = (cellLengths[{maxx, y}] + colWidths[maxx] - 1) / colWidths[maxx];
+         int64_t maxh = 0;
+         for (int64_t x = 0; x < array.sizes[0]; ++x)
+         {
+            int64_t h1 = cellHeights[{x, y}];
+            if (h1 > maxh)
+               maxh = h1;
+         }
+         rowHeights[y] = maxh;
+      }
+   }
+   string res;
+   for (int64_t y = 0; y < array.sizes[1]; ++y)
+   {
+      int64_t maxh = rowHeights[y];
+      for (int64_t h = 0; h < maxh; ++h)
+      {
+         for (int64_t x = 0; x < array.sizes[0]; ++x)
+         {
+            int64_t b = colWidths[x] * h;
+            int64_t e = b + colWidths[x];
+            int64_t l = cellLengths[{x, y}];
+            if (b > l)
+               res += string(e - b, ' ');
+            else if (e > l)
+               res += array[{x, y}].substr(b, colWidths[x]) + string(e - l, ' ');
+            else
+               res += array[{x, y}].substr(b, colWidths[x]);
+            if (x < array.sizes[0] - 1)
+               res += "|";
+         }
+         res += "\n";
+      }
+   }
+   return res;
+}
+
+string toTextMultimethod(MMBase &mm, int64_t max)
+{
+   Array<string> types;
+   Array<string> methods;
+   int64_t maxti = 0;
+   for (int64_t pi = 0; pi < mm.maxArgs; ++pi)
+      if (mm.paramTypeLists[pi].size() > maxti) maxti = mm.paramTypeLists[pi].size();
+   types.sizes = { mm.maxArgs + 1, maxti };
+   types.alloc();
+   methods.sizes = mm.table.sizes;
+   methods.alloc();
+   for (int64_t pti = 0; pti < maxti; ++pti)
+      types[{0, pti}] = string(1, "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"[pti]);
+   for (int64_t pi = 0; pi < mm.maxArgs; ++pi)
+      for (int64_t pti = 0; pti < mm.paramTypeLists[pi].size(); ++pti)
+         types[{pi + 1, pti}] = mm.paramTypeLists[pi][pti]->getName();
+   for (int64_t tableIndex = 0; tableIndex < mm.table.totalSize; ++tableIndex)
+   {
+      vector<int64_t> indices = mm.table.getTableIndices(tableIndex);
+      Any m = mm.table[indices];
+      string res1;
+      if (m.typeInfo->kind == kFunction)
+      {
+         for (int64_t pi = 0; pi < m.maxArgs(); ++pi)
+         {
+            int64_t n = m.paramType(pi, mm.useReturnT)->mmpindices[mm.mmindex][pi];
+            res1 += string(1, "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"[n]);
+         }
+      }
+      else if (m.typeInfo == tiVec)
+      {
+         res1 = "&";
+      }
+      methods[indices] = res1;
+   }
+   return TS+"Multimethod("+mm.name+")\n"+toTextAux(types, max)+toTextAux(methods, max);
 }
 
 string toTextAny(Any a, int64_t max)
@@ -607,16 +745,23 @@ template <class C> void                    tinsertRangeIX (C* col, typename C::i
 template <class C> void                    teraseRangeIX  (C* col, typename C::iterator i0, typename C::iterator i1   ) { col->erase (i0, i1);                 }
 template <class C> void                    tsetElemX      (C* col, int64_t n, typename C::value_type elem                 ) { (*col)[n] = elem;                    }
 template <class C> typename C::value_type& tgetElem       (C* col, int64_t n                                              ) { return (*col)[n];                    }
+template <class C> typename C::value_type  tgetElem1      (C* col, int64_t n                                              ) { return (*col)[n];                    }
 template <class C> typename C::iterator    titerBegin     (C* col                                                     ) { return col->begin();                 }
 template <class C> typename C::iterator    titerEnd       (C* col                                                     ) { return col->end();                   }
 template <class C> C*                      tpushFrontX    (C* col, typename C::value_type elem                        ) { col->insert(col->begin(), elem); return col; }
 template <class C> C*                      tpushBackX     (C* col, typename C::value_type elem                        ) { col->insert(col->end  (), elem); return col; }
 
-template <class C> C*                      tappend        (C* a, C* b) { C* res = new C(*a); res->insert(res->end(), b->begin(), b->end()); return res; }
+template <class C> C*                      tappend        (C*  a, C*  b) { C* res = new C(*a); res->insert(res->end(), b->begin(), b->end()); return res; }
+template <class C> C*                      tappend1       (Any a, Any b) { C* res = new C(*a); res->insert(res->end(), iterBegin(b), iterEnd(b)); return res; }
+
+template <class C> Vec*                    ttoVec         (C* col) { return new Vec(col->begin(), col->end()); }
+template <class C> C*                      tfromVec       (Vec* v) { return new C(v->begin(), v->end()); }
 
 template <class C> typename C::value_type  tfold          (Any fn, typename C::value_type zero, C* col) { typename C::value_type t(zero); for (auto v : *col) t = fn(t, v); return t; }
+template <class C> C*                      tmap           (Any fn, C* col) { C* res = new C(col->size(), C::value_type()); transform(col->begin(), col->end(), res->begin(), fn); return res; }
 
 template <class I> typename I::value_type& tderef         (I i                                                        ) { return *i;                           }
+template <class I> typename I::value_type  tderef1        (I i                                                        ) { return *i;                           }
 template <class I> I&                      iinc           (I i                                                        ) { return ++i;                          }
 template <class I> I&                      idec           (I i                                                        ) { return --i;                          }
 template <class I> bool                    iequal         (I i, I j                                                   ) { return i == j;                       }
@@ -628,19 +773,11 @@ TypeInfo* addContainer(bool textOps = true)
    typedef typename C::iterator I;
    massign     .add(tassign        <C>);
    massign     .add(tassign        <I>);
-   insertElemX .add(tinsertElemIX  <C>);
-   insertElemX .add(tinsertElemIntX<C>);
-   eraseElemX  .add(teraseElemIX   <C>);
-   eraseElemX  .add(teraseElemIntX <C>);
-   setElemX    .add(tsetElemX      <C>);
-   getElem     .add(tgetElem       <C>);
    iterBegin   .add(titerBegin     <C>);
    iterEnd     .add(titerEnd       <C>);
 
-   append      .add(tappend        <C>);
    fold        .add(tfold          <C>);
 
-   mderef      .add(tderef   <I>);
    minc        .add(iinc     <I>);
    mdec        .add(idec     <I>);
    mequal      .add(iequal   <I>);
@@ -649,6 +786,7 @@ TypeInfo* addContainer(bool textOps = true)
    {
       toTextAux   .add(toTextCont<C>);
    }
+   mtoVec      .add(ttoVec  <C>);
 
    findCycles  .add(findCyclesCont<C>);
 
@@ -661,7 +799,35 @@ TypeInfo* addContainer(bool textOps = true)
 }
 
 template <class C>
-TypeInfo* addContainer1()
+TypeInfo* addContainerVD(bool textOps = true)
+{
+   typedef typename C::iterator I;
+   addContainer<C>(textOps);
+   getElem     .add(tgetElem       <C>);
+   insertElemX .add(tinsertElemIX  <C>);
+   insertElemX .add(tinsertElemIntX<C>);
+   eraseElemX  .add(teraseElemIX   <C>);
+   eraseElemX  .add(teraseElemIntX <C>);
+   setElemX    .add(tsetElemX      <C>);
+   mderef      .add(tderef         <I>);
+   append      .add(tappend        <C>);
+   mmap        .add(tmap           <C>);
+   mfromVec    .add(tfromVec       <C>);
+   return getTypeAdd<C>();
+}
+
+template <class C>
+TypeInfo* addContainerNR(bool textOps = true)
+{
+   typedef typename C::iterator I;
+   addContainer<C>(textOps);
+   getElem     .add(tgetElem1      <C>);
+   mderef      .add(tderef1        <I>);
+   return getTypeAdd<C>();
+}
+
+template <class C>
+TypeInfo* addContainer2()
 {
    typedef typename C::value_type     T;
    typedef typename C::iterator       I;
@@ -721,6 +887,19 @@ bool notEqualConsIter(Cons* l, Cons* r)
    return l != r;
 }
 
+Cons* mapCons(Any f, Cons* c)
+{
+   Cons *res = nil;
+   Cons **r  = &res;
+   while (c != nil)
+   {
+      *r = cons(f(c->car), nil);
+      r = &(*r)->cdr.as<Cons*>();
+      c = c->cdr;
+   }
+   return res;
+}
+
 void addList()
 {
    iterBegin   .add(iterBeginCons);
@@ -729,11 +908,12 @@ void addList()
    minc        .add(incConsIter);
    mequal      .add(equalConsIter);
    mnotEqual   .add(notEqualConsIter);
+   mmap        .add(mapCons);
 }
 
 bool equalSymbol(Symbol* a, Symbol* b)
 {
-	return a == b;;
+	return a == b;
 }
 
 bool notEqualSymbol(Symbol* a, Symbol* b)
@@ -748,13 +928,21 @@ void addContainer()
    insertElem.add((T::*(T::iterator, &T::insert);
 }
 */
-void addGlobal(string name, Any f)
+Any addGlobal(string name, Any a)
 {
-   globalFrame->vars.push_back(Var(name, f));
+   globalFrame->vars.push_back(Var(name, a));
+   return a;
 }
 
-template <class ParseResult>
-void addGlobal(string name, Multimethod<ParseResult>& m)
+TypeInfo* addGlobal(string name, TypeInfo* a)
+{
+   a->setName(name);
+   globalFrame->vars.push_back(Var(name, a));
+   return a;
+}
+
+template <class R>
+void addGlobal(string name, Multimethod<R>& m)
 {
    m.name = name;
    globalFrame->vars.push_back(Var(name, &m));
@@ -763,19 +951,6 @@ void addGlobal(string name, Multimethod<ParseResult>& m)
 bool isNum(Any a)
 {
    return a.typeInfo == tiInt || a.typeInfo == tiInt64 || a.typeInfo == tiFloat || a.typeInfo == tiDouble;
-}
-
-Cons* mapCons(Any f, Cons* c)
-{
-   Cons *res = nil;
-   Cons **r  = &res;
-   while (c != nil)
-   {
-      *r = cons(f(c->car), nil);
-      r = &(*r)->cdr.as<Cons*>();
-      c = c->cdr;
-   }
-   return res;
 }
 
 Any List::closureDeleg(Any* lambdaP, Any* params, int64_t np)
@@ -803,7 +978,7 @@ Gen toGen(Vec* c)
 Vec* fileNames(string path)
 {
    Vec* result = new Vec;
-#ifdef WINDOWS
+#ifdef _WIN32
    struct _finddata_t fileData;
    intptr_t hFile;
 
@@ -843,6 +1018,24 @@ Any applyC(Any a, Any b)
    return a(b);
 }
 
+NumberRange<int64_t>* range(int64_t a, int64_t b)
+{
+   return new NumberRange<int64_t>(a, b);
+}
+
+#if 1
+Compose* compose(Any f, Any g)
+{
+   return new Compose(f, g);
+}
+
+Any delegCompose(Any* _compose, Any* args, int64_t n)
+{
+   Compose* compose = *_compose;
+   Any gResult(compose->g.call(args, n));
+   return compose->f.call(&gResult, 1);
+}
+#else
 List::Closure* compose(Any a, Any b)
 {
    List::Closure* lambda = new List::Closure;
@@ -853,7 +1046,7 @@ List::Closure* compose(Any a, Any b)
    lambda->maxArgs = 1;
    return lambda;
 }
-
+#endif
 ostream& operator<<(ostream& Stream, Any any)
 {
    operator<<(Stream, toText(any));
@@ -867,27 +1060,33 @@ Array concatArrays(Any inp, int64_t dim)
 */
 void setup()
 {
-   tiAny       = getTypeAdd<Any       >();
-   tiParseEnd  = getTypeAdd<ParseEnd  >();
-   tiChar      = getTypeAdd<char      >();
-   tiInt8      = getTypeAdd<int8_t    >();
-   tiInt16     = getTypeAdd<int16_t   >();
-   tiInt       = getTypeAdd<int32_t   >();
-   tiInt64     = getTypeAdd<int64_t   >();
-   tiUInt8     = getTypeAdd<uint8_t   >()->setName("uint8");
-   tiUInt16    = getTypeAdd<uint16_t  >()->setName("uint16");
-   tiUInt      = getTypeAdd<uint32_t  >()->setName("uint32");
-   tiUInt64    = getTypeAdd<uint64_t  >()->setName("uint64");
-   tiFloat     = getTypeAdd<float     >();
-   tiDouble    = getTypeAdd<double    >();
-   tiSymbol    = getTypeAdd<Symbol   *>();
-   tiCons      = getTypeAdd<Cons     *>();
-   tiListClosure   = getTypeAdd<List::Closure*>();
-   tiString    = getTypeAdd<string    >()->setName("string");
-   tiVarRef    = getTypeAdd<VarRef   *>();
-   tiVarFunc   = getTypeAdd<VarFunc   >();
-   tiPartApply = getTypeAdd<PartApply*>();
-   tiTypeInfo  = getTypeAdd<TypeInfo *>();
+   globalFrame = new Frame;
+   globalFrame->context = nullptr;
+   globalFrame->visible = false;
+
+   tiAny         = addGlobal("Any"        , getTypeAdd<Any       >());
+   tiParseEnd    = addGlobal("ParseEnd"   , getTypeAdd<ParseEnd  >());
+   tiDouble      = addGlobal("double"     , getTypeAdd<double    >());
+   tiFloat       = addGlobal("float"      , getTypeAdd<float     >());
+   tiInt64       = addGlobal("int64"      , getTypeAdd<int64_t   >());
+   tiInt32       = addGlobal("int32"      , getTypeAdd<int32_t   >());
+   tiInt16       = addGlobal("int16"      , getTypeAdd<int16_t   >());
+   tiInt8        = addGlobal("int8"       , getTypeAdd<int8_t    >());
+   tiUInt64      = addGlobal("uint64"     , getTypeAdd<uint64_t  >());
+   tiUInt32      = addGlobal("uint32"     , getTypeAdd<uint32_t  >());
+   tiUInt16      = addGlobal("uint16"     , getTypeAdd<uint16_t  >());
+   tiUInt8       = addGlobal("uint8"      , getTypeAdd<uint8_t   >());
+   tiChar        = addGlobal("char"       , getTypeAdd<char      >());
+   tiSymbol      = addGlobal("symbol"     , getTypeAdd<Symbol   *>());
+   tiCons        = addGlobal("Cons"       , getTypeAdd<Cons     *>());
+   tiListClosure = addGlobal("ListClosure", getTypeAdd<List::Closure*>());
+   tiString      = addGlobal("string"     , getTypeAdd<string    >());
+   tiVarRef      = addGlobal("VarRef"     , getTypeAdd<VarRef   *>());
+   tiVarFunc     = addGlobal("VarFunc"    , getTypeAdd<VarFunc   >());
+   tiPartApply   = addGlobal("PartApply"  , getTypeAdd<PartApply*>());
+   tiTypeInfo    = addGlobal("TypeInfo "  , getTypeAdd<TypeInfo *>());
+   tiInt  = tiInt64;
+   tiUInt = tiUInt64;
 
    addMember(&Cons::car, "car");
    addMember(&Cons::cdr, "cdr");
@@ -899,15 +1098,14 @@ void setup()
    addMember(&Frame::vars   , "vars");
    addMember(&Frame::context, "context");
 
-   addMember(&TypeInfo::members       , "args");
-   addMember(&TypeInfo::bases      , "bases");
+   addMember(&TypeInfo::members    , "args");
    addMember(&TypeInfo::copyCon    , "copyCon");
    addMember(&TypeInfo::count      , "count");
    addMember(&TypeInfo::delegPtr   , "delegPtr");
-   addMember(&TypeInfo::derived    , "derived");
    addMember(&TypeInfo::fullName   , "fullName");
    addMember(&TypeInfo::kind       , "kind");
-   addMember(&TypeInfo::linear     , "linear");
+   addMember(&TypeInfo::conv       , "conv");
+   addMember(&TypeInfo::main       , "main");
    addMember(&TypeInfo::member     , "member");
    addMember(&TypeInfo::multimethod, "multimethod");
    addMember(&TypeInfo::name       , "name");
@@ -928,18 +1126,40 @@ void setup()
    addTypeLink(tiInteger , tiUnsigned);
    addTypeLink(tiSigned  , tiInt8    );
    addTypeLink(tiSigned  , tiInt16   );
-   addTypeLink(tiSigned  , tiInt     );
+   addTypeLink(tiSigned  , tiInt32   );
    addTypeLink(tiSigned  , tiInt64   );
    addTypeLink(tiUnsigned, tiUInt8   );
    addTypeLink(tiUnsigned, tiUInt16  );
-   addTypeLink(tiUnsigned, tiUInt    );
+   addTypeLink(tiUnsigned, tiUInt32  );
    addTypeLink(tiUnsigned, tiUInt64  );
    addTypeLink(tiFloating, tiFloat   );
    addTypeLink(tiFloating, tiDouble  );
 
-   tiInt   ->nKind = kSigned;
+   addTypeLinkConv(tiDouble, tiFloat );
+   addTypeLinkConv(tiDouble, tiInt64 );
+
+   addTypeLinkConv(tiInt64 , tiInt32 );
+   addTypeLinkConv(tiInt32 , tiInt16 );
+   addTypeLinkConv(tiInt16 , tiInt8  );
+
+   addTypeLinkConv(tiUInt64, tiUInt32);
+   addTypeLinkConv(tiUInt32, tiUInt16);
+   addTypeLinkConv(tiUInt16, tiUInt8 );
+
+   addTypeLinkConv(tiInt64 , tiUInt64);
+   addTypeLinkConv(tiInt32 , tiUInt32);
+   addTypeLinkConv(tiInt16 , tiUInt16);
+   addTypeLinkConv(tiInt8  , tiUInt8 );
+
+   tiUInt8->doC3Lin(&TypeInfo::conv);
+
+   tiInt8  ->nKind = kSigned;
+   tiInt16 ->nKind = kSigned;
+   tiInt32 ->nKind = kSigned;
    tiInt64 ->nKind = kSigned;
-   tiUInt  ->nKind = kUnsigned;
+   tiUInt8 ->nKind = kUnsigned;
+   tiUInt16->nKind = kUnsigned;
+   tiUInt32->nKind = kUnsigned;
    tiUInt64->nKind = kUnsigned;
    tiFloat ->nKind = kFloat;
    tiDouble->nKind = kFloat;
@@ -1066,32 +1286,39 @@ void setup()
    toTextAux.add(toTextLambda);
    toTextAux.add(toTextTypeInfo);
    toTextAux.add(toTextFrame);
+   toTextAux.add(toTextArray);
    toTextAux.add(toTextMultimethod);
    toTextAux.add(toTextVar);
 
-   pushBack.add(pushBackCons);
-   mequal.add(equalSymbol);
+   pushBack .add(pushBackCons);
+   mequal   .add(equalSymbol);
    mnotEqual.add(notEqualSymbol);
 
-   addContainer<vector<int64_t>>()->setName("vector<int64_t>");
-   tiVec = addContainer<vector<Any>>()->setName("vector<Any>");
-   addContainer<deque <int64_t>>()->setName("deque<int64_t>");
-   addContainer<deque <Var>>()->setName("deque<Var>");
-   addContainer<string      >(false)->setName("string");
-   addContainer<vector<Expr*>>()->setName("vector<Expr*>");
-   addList();
+           addContainerVD<vector     <int64_t>>()->setName("vector<int64_t>");
+   tiVec = addContainerVD<vector     <Any    >>()->setName("vector<Any>");
+           addContainerVD<deque      <int64_t>>()->setName("deque<int64_t>");
+           addContainerVD<deque      <Var    >>()->setName("deque<Var>");
+           addContainerVD<string              >(false)->setName("string");
+           addContainerVD<vector     <Expr*  >>()->setName("vector<Expr*>");
+           addContainerNR<NumberRange<int64_t>>()->setName("NumberRange<int>");
 
-   globalFrame = new Frame;
-   globalFrame->context = nullptr;
-   globalFrame->visible = false;
-   addMathOps<   char>(false);
-   addMathOps< int8_t>();
+   addList();
+   madd.useConversions = true;
+   madd.useTable = true;
+   addMathOps< double>();
+   addMathOps<  float>();
+   addMathOps<int8_t>();
    addMathOps<int16_t>();
    addMathOps<int32_t>();
    addMathOps<int64_t>();
-   addMathOps< double>();
-   addMathOps<  float>();
+   addMathOps<uint8_t>();
+   addMathOps<uint16_t>();
+   addMathOps<uint32_t>();
+   addMathOps<uint64_t>();
+   addMathOps<   char>(false);
+   addGlobal("convert" , convert   );
    addGlobal("="       , massign   );
+   addGlobal("range"   , range     );
    addGlobal("+"       , madd      );
    addGlobal("-"       , msubtract );
    addGlobal("*"       , mmultiply );
@@ -1112,7 +1339,6 @@ void setup()
    addGlobal("fourth"  , fourth    );
    addGlobal("list"    , VarFunc   (mylistN, 0, INT_MAX));
    addGlobal("toText"  , toText    );
-   addGlobal("map"     , mapCons   );
 
    addGlobal("insertElemX" , insertElemX );
    addGlobal("eraseElemX"  , eraseElemX  );
@@ -1122,6 +1348,7 @@ void setup()
    addGlobal("iterEnd"     , iterEnd     );
 
    addGlobal("++"          , append      );
+   addGlobal("map"         , mmap        );
    addGlobal("fold"        , fold        );
 
    addGlobal("deref"       , mderef      );
@@ -1149,10 +1376,11 @@ void setup()
    addGlobal("names", fileNames);
    toTextAux   .add(toTextAny);
    findCycles  .add(findCyclesAny);
+   madd.buildTable();
    initParser2();
 
-   for (auto p : typeMap) p.second->doC3Lin();
-
+   for (auto p : typeMap) p.second->doC3Lin(&TypeInfo::main);
+   for (auto p : typeMap) p.second->doC3Lin(&TypeInfo::conv);
    for (auto p : typeMap) p.second->allocate();
 
    convert.buildTable();
@@ -1178,3 +1406,4 @@ struct Func
 
 print Func(2, 3)();
 */
+

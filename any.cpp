@@ -17,8 +17,15 @@ set<MMBase*> MMBase::mms;
 void addTypeLink(TypeInfo* base, TypeInfo* derived, LinkKind kind, int64_t offset)
 {
    TypeLink* tl = new TypeLink(base, derived, kind, offset);
-   base->derived.push_back(tl);
-   derived->bases.push_back(tl);
+   base->main.derived.push_back(tl);
+   derived->main.bases.push_back(tl);
+}
+
+void addTypeLinkConv(TypeInfo* base, TypeInfo* derived)
+{
+   TypeLink* tl = new TypeLink(base, derived, lConv, 0);
+   base->conv.derived.push_back(tl);
+   derived->conv.bases.push_back(tl);
 }
 
 Any delegVoid0(Any* fp1, Any* params, int64_t n)
@@ -26,6 +33,18 @@ Any delegVoid0(Any* fp1, Any* params, int64_t n)
    void (*fp)() = *fp1;
    fp();
    return Any(0);
+}
+
+Any delegMMPV(Any* mm, Any* args, int64_t n)
+{
+   mm->as<Multimethod<void>*>()->call(args, n);
+   return 0;
+}
+
+Any delegMMV(Any* mm, Any* args, int64_t n)
+{
+   mm->as<Multimethod<void>>().call(args, n);
+   return 0;
 }
 
 TypeLink* joinLinks(TypeLink* btod, TypeLink* dtodd)
@@ -222,7 +241,6 @@ Any Any::derp()
 {
    return Any(typeInfo->of, *(void**)ptr);
 }
-
 Any::operator MMBase& ()
 {
    if (typeInfo->kind == kPointer && typeInfo->of->multimethod) return **static_cast<MMBase**>(ptr);
@@ -404,7 +422,7 @@ Any Any::member(Member* m)
    tiNew->destroy = destroynothing;
    tiNew->delegPtr = nullptr;
    tiNew->size = sizeof(void*);
-   //TypeInfo* ti = *typeSetR.find(typeInfo->cType);
+   //TypeInfo* typeIndex = *typeSetR.find(typeInfo->cType);
    char* ptrNew = reinterpret_cast<char*>(ptr) + m->offset;
    return Any(tiNew, reinterpret_cast<void*>(&ptrNew));
 #else
@@ -433,46 +451,46 @@ Any Any::member(int64_t n)
    //return (*m->getMemberRef)(m, *this);
 }
 
-void TypeInfo::doC3Lin()
+void TypeInfo::doC3Lin(TypeConn TypeInfo::* conn)
 {
    typedef deque<TypeList> TypeLists;
    TypeLists baseLins;
    TypeList  result;
    result.push_back(this);
 
-   if (!bases.empty())
+   if (!(this->*conn).bases.empty())
    {
-      int64_t blCount = bases.size();
-      for (TypeLinkList::iterator b = bases.begin(); b != bases.end(); ++b)
+      int64_t blCount = (this->*conn).bases.size();
+      for (auto baseLink : (this->*conn).bases)
       {
-         if ((*b)->base->linear.empty()) (*b)->base->doC3Lin();
-         baseLins.push_back((*b)->base->linear);
+         if ((baseLink->base->*conn).linear.empty()) baseLink->base->doC3Lin(conn);
+         baseLins.push_back((baseLink->base->*conn).linear);
       }
       while (blCount)
       {
          //loop through all the base linearisations, looking at the heads to see if any are good
-         for (size_t baseI = 0; baseI < baseLins.size(); ++baseI)
+         for (auto &baseLin : baseLins)
          {
-            if (baseLins[baseI].empty()) continue;
-            TypeInfo* head = baseLins[baseI][0];
+            if (baseLin.empty()) continue;
+            TypeInfo* head = baseLin[0];
 
             //loop through the tails of the base linearisations, making sure this head does not occur, if it does it is BAD
-            for (TypeLists::iterator tailCheck = baseLins.begin(); tailCheck != baseLins.end(); ++tailCheck)
+            for (auto &tailCheck : baseLins)
             {
-               for (size_t i = 1; i < tailCheck->size(); ++i)
+               for (size_t i = 1; i < tailCheck.size(); ++i)
                {
-                  if (head == (*tailCheck)[i]) goto bad;
+                  if (head == tailCheck[i]) goto bad;
                }
             }
             result.push_back(head);
 
             //now remove this good head from ALL the base linearisations
-            for (int64_t j = baseLins.size() - 1; j >= 0; --j)
+            for (auto &decapitate : baseLins)
             {
-               if (baseLins[j][0] == head)//only need to check the first since we know it's not in the tail
+               if (decapitate[0] == head)//only need to check the first since we know it's not in the tail
                {
-                  baseLins[j].erase(baseLins[j].begin());
-                  if (baseLins[j].empty()) --blCount;
+                  decapitate.erase(decapitate.begin());
+                  if (decapitate.empty()) --blCount;
                }
             }
             goto good;
@@ -485,7 +503,7 @@ good:;
          //success: keep going while baseLins is not empty
       }
    }
-   linear = result;
+   (this->*conn).linear = result;
 }
 
 void TypeInfo::allocate()
@@ -499,7 +517,7 @@ void TypeInfo::allocate()
    if (!cpp)
    {
       size = 0;
-      for (auto p : bases)
+      for (auto p : main.bases)
       { 
          p->base->allocate();
          p->offset = size;
@@ -520,7 +538,7 @@ void TypeInfo::allocate()
 
 void TypeInfo::allocate2(TypeInfo* derived, int64_t baseOffset, TypeLinkList& links)
 {
-   for (auto p : bases)
+   for (auto p : main.bases)
    {
       TypeLinkList linksNew(links);
       linksNew.push_back(p);
@@ -548,7 +566,7 @@ void TypeInfo::allocate2(TypeInfo* derived, int64_t baseOffset, TypeLinkList& li
 
 TypeInfo* findLink(TypeInfo* base, TypeInfo* derived)
 {
-   for (TypeList::iterator l = derived->linear.begin(); l != derived->linear.end(); ++l)
+   for (TypeList::iterator l = derived->main.linear.begin(); l != derived->main.linear.end(); ++l)
    {
       if (*l == base) return *l;
    }
@@ -558,7 +576,7 @@ TypeInfo* findLink(TypeInfo* base, TypeInfo* derived)
 bool hasLink(TypeInfo* base, TypeInfo* derived)
 {
    if (base == derived) return true;
-   for (TypeList::iterator l = derived->linear.begin(); l != derived->linear.end(); ++l)
+   for (TypeList::iterator l = derived->main.linear.begin(); l != derived->main.linear.end(); ++l)
    {
       if (*l == base) return true;
    }
@@ -572,9 +590,9 @@ bool hasLinkBi(TypeInfo* a, TypeInfo* b)
 
 int64_t indexLink(TypeInfo* base, TypeInfo* derived)
 {
-   for (size_t i = 0; i < derived->linear.size(); ++i)
+   for (size_t i = 0; i < derived->main.linear.size(); ++i)
    {
-      if (derived->linear[i] == base) return i;
+      if (derived->main.linear[i] == base) return i;
    }
    return -1;
 }
@@ -582,8 +600,8 @@ int64_t indexLink(TypeInfo* base, TypeInfo* derived)
 /*
 void addMember(Any member, string name)
 {
-   TypeInfo* ti = member.typeInfo;
-   if (!ti->member)
+   TypeInfo* typeIndex = member.typeInfo;
+   if (!typeIndex->member)
       cout << "not a data member" << endl;
 }
 */
@@ -689,6 +707,11 @@ std::string TypeInfo::getCName(std::string var)
 std::string TypeInfo::getName()
 {
    ostringstream o;
+   if (this == nullptr)
+   {
+      o << "NULLPTR!!";
+      return o.str();
+   }
    switch (kind)
    {
    case kNormal:
@@ -803,3 +826,576 @@ void addMemberInterp(TypeInfo* _class, std::string name, TypeInfo* type)
 {
    _class->members.add(new Member(getSymbol(name), type, _class->size));
 }
+
+void MMBase::add(Any method)
+{
+   TypeInfo* ti = method.typeInfo;
+   int64_t methodMaxArgs = method.maxArgs() + (useReturnT ? 1 : 0);
+   int64_t methodMinArgs = method.minArgs() + (useReturnT ? 1 : 0);
+   if (methods.size() == 0 || methodMaxArgs > maxArgs) maxArgs = methodMaxArgs;
+   if (methods.size() == 0 || methodMinArgs < minArgs) minArgs = methodMinArgs;
+   methods.push_back(method);
+   needsBuilding = true;
+}
+int MMBase::compareMethods(Any& lhs, Any& rhs, TypeList &at)
+{
+   if (useReturnT)
+   {
+      throw "not implemented yet";
+   }
+   else
+   {
+      bool lhsBetter = false;
+      bool rhsBetter = false;
+      for (size_t ai = 0; ai < maxArgs; ++ai)
+      {
+         auto atlb = at[ai]->conv.linear.begin();//atl = argument type linearisation
+         auto atle = at[ai]->conv.linear.end();
+
+         auto lhsAtl = find(atlb, atle, lhs.paramType(ai, useReturnT));
+         auto rhsAtl = find(atlb, atle, rhs.paramType(ai, useReturnT));
+         if (lhsAtl < rhsAtl)
+            lhsBetter = true;
+         else if (rhsAtl < lhsAtl)
+            rhsBetter = true;
+      }
+      if (lhsBetter)
+         if (rhsBetter)
+            return 0;//each has arguments/parameters it is better on
+         else
+            return -1;//lhs is better, the best ones get sorted to the front
+      else
+         if (rhsBetter)
+            return 1;//rhs is better
+         else
+            return 1;
+            //throw "methods have the same parameters";
+   }
+}
+void MMBase::findMostDerived(int64_t paramIndex, TypeInfo* type)
+{
+   if (type->conv.derived.size())
+   {
+      for (auto derLink : type->conv.derived)
+         findMostDerived(paramIndex, derLink->derived);
+   }
+   else
+      fillParamTypesInOrder(paramIndex, type);
+}
+void MMBase::fillParamTypesInOrder(int64_t paramIndex, TypeInfo* type)
+{
+   if (paramTypeSets2[paramIndex].contains(type))
+      return;
+   for (auto baseLink : type->conv.bases)
+      fillParamTypesInOrder(paramIndex, baseLink->base);
+   if (paramTypeSets[paramIndex].contains(type))
+   {
+      paramTypeSets2[paramIndex].insert(type);
+      paramTypeLists[paramIndex].push_back(type);
+   }
+}
+void MMBase::buildTable()
+{
+   table.clear();
+   paramTypeSets.clear();
+   paramTypeSets.resize(maxArgs);
+   for (auto &m : methods)
+      for (size_t pi = 0; pi < maxArgs; ++pi)
+         paramTypeSets[pi].insert(m.paramType(pi, useReturnT));
+
+   paramTypeSets2.clear();
+   paramTypeLists.clear();
+   paramTypeSets2.resize(maxArgs);
+   paramTypeLists.resize(maxArgs);
+   for (size_t paramIndex = 0; paramIndex < maxArgs; ++paramIndex)
+   {
+      for (auto type : paramTypeSets[paramIndex])
+         findMostDerived(paramIndex, type);
+   }
+
+   for (size_t pi = 0; pi < maxArgs; ++pi)
+   {
+      auto &param = paramTypeLists[pi];
+      for (size_t ti = 0; ti < param.size(); ++ti)
+         fillParamType(true, pi, ti, param[ti]);
+   }
+
+   table.sizes.resize(maxArgs);
+   for (size_t pi = 0; pi < maxArgs; ++ pi)
+      table.sizes[pi] = paramTypeLists[pi].size();
+   table.alloc();
+   std::vector<TypeInfo*> at(maxArgs);
+#if 1
+   std::vector<int64_t> ati(maxArgs);
+   for (auto &m : methods)
+   {
+      for (size_t pi = 0; pi < maxArgs; ++pi)
+         ati[pi] = m.paramType(pi, useReturnT)->mmpindices[mmindex][pi];
+      table[ati] = m;
+   }
+   if (useConversions)
+   {
+      bool ambiguities = false;
+      bool blankCells  = false;
+      for (int64_t tableIndex = 0; tableIndex < table.totalSize; ++tableIndex)
+      {
+         int64_t tableIndex1 = tableIndex;
+         for (size_t pi = 0; pi < maxArgs; ++pi)
+         {
+            ati[pi] = tableIndex1 % table.sizes[pi];
+            at[pi] = paramTypeLists[pi][ati[pi]];
+            tableIndex1 /= table.sizes[pi];
+         }
+         if (!table[ati].callable())
+         {
+            vector<TypeInfo*> at2(at);
+            std::vector<int64_t> ati2(ati);
+            Vec bestMethods;
+            for (size_t pi = 0; pi < maxArgs; ++pi)
+            {
+               for (auto &cb : at[pi]->conv.bases)
+               {
+                  if (paramTypeSets[pi].contains(cb->base))
+                  {
+                     at2[pi] = cb->base;
+                     ati2[pi] = cb->base->mmpindices[mmindex][pi];
+                     Any prevCell = table[ati2];
+                     Vec newMethods;
+                     if (prevCell.typeInfo->kind == kFunction)
+                        newMethods.push_back(prevCell);
+                     else if (prevCell.typeInfo == tiVec)
+                        newMethods = Vec(prevCell);
+                     if (newMethods.size() > 0) 
+                     {
+                        for (auto &newMethod : newMethods)
+                        {
+                           bool add = true;
+                           for (int64_t bmi = bestMethods.size() - 1; bmi >= 0; --bmi)
+                           {
+                              int c = compareMethods(newMethod, bestMethods[bmi], at);
+                              if (c < 0)
+                                 bestMethods.erase(bestMethods.begin() + bmi);
+                              else if (c > 0)
+                                 add = false;
+                           }
+                           if (add)
+                              bestMethods.push_back(newMethod);
+                        }
+                     }
+                  }
+               }
+               at2 [pi] = at [pi];
+               ati2[pi] = ati[pi];
+            }
+            if (bestMethods.size() == 1)
+            {
+               table[ati] = bestMethods[0];
+            }
+            else if (bestMethods.size() > 1)
+            {
+               table[ati] = bestMethods;
+               ambiguities = true;
+            }
+            else
+            {
+               blankCells = true;
+            }
+         }
+      }
+      if (blankCells || ambiguities)
+      {
+         if (blankCells ) cout << "warning: multimethod " << name << " has blank cells" << endl;
+         if (ambiguities) cout << "warning: multimethod " << name << " has ambiguities" << endl;
+         cout << toText(*this, 120);
+      }
+   }
+#else
+   std::vector<Any*> validMethods;
+   for (auto &m : methods) validMethods.push_back(&m);//make a vector of pointers so we can easily test for equality
+   simulate(validMethods, at, 0);
+#endif
+}
+void MMBase::fillParamType(bool first, int64_t paramIndex, int64_t typeIndex, TypeInfo* type)
+{
+   if (!first && paramTypeSets[paramIndex].contains(type)) return;
+   if (type->mmpindices.size() <= mmindex)
+      type->mmpindices.resize(mmindex + 1);
+   if (type->mmpindices[mmindex].size() <= paramIndex)
+      type->mmpindices[mmindex].resize(paramIndex + 1, -1);
+   type->mmpindices[mmindex][paramIndex] = typeIndex;
+   for (auto d : type->conv.derived)
+      fillParamType(false, paramIndex, typeIndex, d->derived);
+}
+void MMBase::simulate(std::vector<Any*> &validMethods, std::vector<TypeInfo*> &at, int64_t ai)
+{
+   //step 1
+   if (ai < maxArgs)
+   {
+      for (auto at1 : paramTypeLists[ai])
+      {
+         std::vector<Any*> validMethodsNew;
+         at[ai] = at1;
+         for (auto m : validMethods)
+            if (hasLink(m->paramType(ai, useReturnT), at1))
+               validMethodsNew.push_back(m);
+         simulate(validMethodsNew, at, ai + 1);
+      }
+   }
+   //step 2
+   else
+   {
+      //at this point, validMethods is a list of the valid methods for the argument types in 'at'
+      std::vector<Any*> bestMethods(validMethods);
+      std::vector<std::set<TypeInfo*>> validParamTypes(maxArgs);
+      //get all the param types of the VALID methods
+      for (size_t ai2 = 0; ai2 < maxArgs; ++ai2)
+         for (auto m : validMethods)
+            validParamTypes[ai2].insert(m->paramType(ai2, useReturnT));
+      //now find the best method by a similar process
+      //the best method is definitely among those that have the best (valid) param type for the argument types currently in 'at'
+      for (size_t ai2 = 0; ai2 < maxArgs; ++ai2)
+      {
+         auto atlb = at[ai2]->conv.linear.begin();//atl = argument type linearisation
+         auto atle = at[ai2]->conv.linear.end();
+         auto atlmin = atle;
+         TypeInfo* ptmin = nullptr;
+         //find the best valid param type (not just the best one still in bestMethods)
+         for (auto pt : validParamTypes[ai2])
+         {
+            auto atl = std::find(atlb, atle, pt);
+            if (atl < atlmin)
+            {
+               atlmin = atl;
+               ptmin = pt;
+            }
+         }
+         if (!ptmin) throw std::runtime_error("Algorithm failure in multimethod::simulate - parameter type found in step 1 has seemingly disappeared in step 2");
+         std::vector<Any*> bestMethodsNew;
+         for (auto m : bestMethods)
+            if (m->paramType(ai2, useReturnT) == ptmin)
+               bestMethodsNew.push_back(m);
+         bestMethods = std::move(bestMethodsNew);
+      }
+      if (bestMethods.size() == 1)
+      {
+         std::vector<int64_t> ati(maxArgs);
+         for (int64_t ai2 = 0; ai2 < maxArgs; ++ai2)
+            ati[ai2] = at[ai2]->mmpindices[mmindex][ai2];
+         table[ati] = *bestMethods.front();
+      }
+      else if (bestMethods.size() == 0)
+      {
+         std::cout << "warning: no best method in multimethod " << name << " for argument types ";
+         for (size_t ai2 = 0; ai2 < maxArgs; ++ai2)
+            std::cout << at[ai2]->getName() << "  ";
+         std::cout << std::endl;
+      }
+      else
+      {
+         std::cout << "very strange indeed!" << std::endl;
+      }
+   }
+   return;
+}
+
+Any* MMBase::getMethod(Any* args, int64_t nargs)
+{
+   if (useTable)
+   {
+      return getMethodFromTable(args, nargs);
+   }
+   else
+   {
+      for (auto &method : methods)
+      {
+         for (size_t ai = 0; ai < nargs; ++ai)
+         {
+            TypeInfo* fromt;
+            TypeInfo* tot;
+            if (useReturnT && ai == 0) 
+            {
+               tot = args[ai];
+               fromt = method.paramType(ai, useReturnT);
+            }
+            else
+            {
+               fromt = args[ai].typeInfo;
+               tot = method.paramType(ai, useReturnT);
+            }
+            if (!(tot == tiAny || fromt->isPRTF(tot)))
+            {
+               goto nextMethod2;
+            }
+         }
+         return &method;
+      nextMethod2:;
+      }
+      std::cerr << "multimethod not applicable to type(s)" << endl;
+      std::cerr << "MULTIMETHOD " << name << " CALLED WITH: ";
+      for (size_t ai = 0; ai < nargs; ++ai)
+         std::cerr << args[ai].typeName() << "   ";
+      std::cerr << std::endl;
+      std::cerr << "multimethod contains these methods:" << std::endl;
+      for (size_t mi = 0; mi < methods.size(); ++mi)
+         std::cerr << toText(methods[mi], LLONG_MAX) << std::endl;
+      throw "multimethod not applicable to type(s)";
+   }
+}
+
+
+Any* MMBase::getMethodFromTable(Any* args, int64_t nargs)
+{
+   if (needsBuilding)
+      buildTable();
+   Any* address = table.mem;
+   int64_t mult = 1;
+   if (useReturnT)
+   {
+      address += args[0].as<TypeInfo*>()->mmpindices[mmindex][0] * mult;
+      mult *= table.sizes[0];
+      for (int64_t ai = 1; ai < nargs; ++ai)
+      {
+         address += args[ai].typeInfo->mmpindices[mmindex][ai] * mult;
+         mult *= table.sizes[ai];
+      }
+   }
+   else
+   {
+      for (int64_t ai = 0; ai < nargs; ++ai)
+      {
+         address += args[ai].typeInfo->mmpindices[mmindex][ai] * mult;
+         mult *= table.sizes[ai];
+      }
+   }
+   return address;
+}
+/*
+* remember that actual arguments are copied to formal parameters
+* so arguments must be convertible to parameter types
+* so parameters must be a base of the arguments
+* 
+* thoughts on a faster algorithm
+* 
+* an argument list that is the same is an error, so ignore those
+* an argument that is not convertible to the parameter is invalid
+* an argument list that is all (the same or worse) is replaced
+* an argument list that is all (the same or better) replaces
+* so that only leaves: a blocking argument list must be better on at least one argument and worse on at least one, ie. the argument lists are unordered
+*                 and: a list with an argument that multiply inherits from two different parameter types (but could decide by linearisation)
+*
+* clear the multidimensional table
+* mark the available methods in the table
+* loop through the table from least specific to most specific, normal row by row, column by column will work 
+* at each cell:
+*    if it's already filled (by an exact method), leave it
+*    look at the cells previous to it in each dimension and see how many DIFFERENT methods there are
+*       if there is only a single method, fill the current one with the same
+*       if there is more than one method, we have an ambiguity
+* 
+* for each method
+*   mark the exact parameters in the table
+*   depth first search through derived classes of parameters (don't forget this is multi-dimensional due to multiple parameters)
+*     when we hit a type with a method with a parameter that is derived:
+*       stop and check the other parameters to see if it blocks or replaces
+*     what happens when we meet up with the search from another method with a parameter of a different base due to multiple inheritance?
+*        use linearisation to decide?
+*        how do we detect this?
+*
+* can initialise a const int64_t with an int64_t
+* cannot assign to a const int64_t with anything
+*
+* types written the sane way instead of the c inside out way
+* 
+*                           can assign this
+*  to this         |* int|* const int|const * int|const * const int|
+*       *       int|ia   |           |ia         |
+*       * const int|
+* const *       int|
+* const * const int|
+* 
+* cant set a * int to point to a const int
+* a * const int can point to an int or a const int
+* 
+* if you set a * * const int to point to a * const int, that's fine
+* if you set a * * const int to point to a * int, like a * const int points to an int, 
+*    THAT is when the trouble starts because you could then, via the pointer to pointer, 
+*    reassign that * int to point to a const int, because it thinks it's a * const int according to the type signature
+* 
+
+int = int
+int = const int
+const int -- can't assign at all, only initialise
+
+*int = *int
+*int = *const int  // not allowed
+*const int = *const int
+*const int = *int
+
+**int = **int
+**const int = **const int
+**int = **const int //obviously not allowed
+**const int = **int //not allowed but less obvious
+*const*const int = **int //ok
+
+
+const int a = 1
+* int pa;
+* * const int ppa = &pa; // we have to disallow this
+* const * const int ppa2 = &pa // but this is ok because the extra const disallows *ppa2 = &a
+*ppa = &a;
+*pa = 2;
+
+* 
+* cost of numeric conversions
+* 
+* things to be lost bad to not so bad
+* 
+* giant amounts of range as in double -> int8
+* the whole negative sign as in int -> uint
+* fractional part
+* significant figures
+*
+* 1-3
+* perfect conversions (but they are a waste of memory)
+* float -> double
+* int8 -> int16 -> int32 -> int64
+* uint8 -> uint16 -> uint32 -> uint64
+* uint8 -> int16/int32/int64
+* uint16 -> int32/int64
+* uint32 -> int64
+* 
+* 10
+* losing 1 bit of range
+* uintx -> intx
+* 
+* int64 uint64
+* |    \   |
+* int32 uint32
+* |    \   |
+* int16 uint16
+* |    \   |
+* int8  uint8
+* 
+* int64       
+*   |  \    
+* int32 uint64
+*   |  \   |
+* int16 uint32
+*   |  \   |
+*  int8 uint16
+*      \   |
+*       uint8
+*                                    from
+*  to     double float int64 uint64 int32 uint32 int16 uint16 int8 uint8
+* double       0     1                                                    
+* float              0                                                            
+* int64                    0     10     1      1     2      2    3     3
+* uint64                          0            1            2          3
+* int32                                 0     10     1      1    2     2
+* uint32                                       0            1          2
+* int16                                              0     10    1     1
+* uint16                                                    0          1
+* int8                                                           0    10
+* uint8                                                                0
+*
+* question: what is the equivalent of the base class-derived class relation in terms of conversions?
+* is it (a) the base has a cheaper conversion to the parameter type than the derived
+*       (b) the base is the type that the derived converts to cheapest
+*       (c) the derived converts to the base cheaper than the base converts to the param
+* 
+* leaning towards (b)
+* 
+* think relation needs to be transitive for the new algorithm to work
+* 
+* what we want is for the cheapest convert from a derived 
+* 
+* what we want is for the predecessor cells to contain the best method for the area they cover, i.e. the area they cover contains no method with a cheaper parameter conversion
+* 
+* we need to search the previous cells from cheapest conversion to most expensive stopping when we find something
+* 
+* we're in cell 3, we search cell 2. say cell 2's only previous cell was 1
+* 
+* 
+class O
+class A extends O             A O
+class B extends O             B O
+class C extends O             C O
+class D extends O             D O
+class E extends O             E O
+class K1 extends C, B, A      C B A O
+class K2 extends A, D         A D O
+class K3 extends B, D, E      B D E O
+class Z extends K1, K2, K3    Z K1 C K2 K3 B A D E O
+
+In K3, K3 precedes A, but in Z it is reversed
+
+I think C3 linearisation is what I need. Just check the local bases for methods AND THEN choose the one closest to the head of the linearisation. That would certainly make it easier 
+*/
+#if 0
+paramConversions.clear();
+paramConversions.resize(maxArgs);
+//due to the fact that the only thing that matters is which type an argument converts to with the lowest cost,
+//all arguments that convert to that type cheapest can have the same index
+for (size_t pi = 0; pi < maxArgs; ++pi)
+{ 
+   for (int64_t fromi = 0; fromi < convert.paramTypeLists[1].size(); ++fromi)
+   {
+      vector<int64_t> costi(2);
+      costi[1] = fromi;
+      int64_t minCost = maxCost;
+      int64_t minIndex = -1;
+      TypeInfo* minType = nullptr;
+      for (int64_t toi = 0; toi < convert.paramTypeLists[0].size(); ++toi)
+      {
+         if (paramTypeSets[pi].contains(convert.paramTypeLists[0][toi]))
+         {
+            costi[0] = toi;
+            int64_t cost = convert.costs[costi];
+            if (cost < minCost)
+            {
+               minCost = cost;
+               minIndex = toi;
+               minType = convert.paramTypeLists[0][toi];
+            }
+         }
+      }
+      if (minType)//if this is not null then an argument of type convert.paramTypeLists[1][fromi] is valid
+      {
+         int64_t newIndex = find(paramTypeLists[pi].begin(), paramTypeLists[pi].end(), minType) - paramTypeLists[pi].begin();
+         convert.paramTypeLists[1][fromi]->mmpindices[mmindex][pi] = newIndex;
+      }
+
+
+      for (auto type : paramTypeLists[pi])
+      {
+         costi[0] = type->mmpindices[convert.mmindex][pi];
+         int64_t cost = convert.costs[costi];
+
+         MMParamType paramType;
+         paramType.type = type;
+         paramConversions[pi][fromi].conversions.push_back(make_pair(convert.costs[costi], convert.paramConversions[1][fromi].type));
+      }
+      sort(paramType.conversions.begin(), paramType.conversions.end());
+      paramConversions[pi].push_back(paramType);
+   }
+}
+#endif
+#if 0
+for (size_t pi = 0; pi < maxArgs; ++pi)
+{ 
+   for (auto type : paramTypeSets[pi])
+   {
+      MMParamType paramType;
+      paramType.type = type;
+      for (size_t fromi = 0; fromi < convert.paramConversions[1].size(); ++fromi)
+      {
+         vector<int64_t> costi(2);
+         costi[0] = type->mmpindices[mmindex][pi];
+         costi[1] = fromi;
+         paramType.conversions.push_back(make_pair(convert.costs[costi], convert.paramConversions[1][fromi].type));
+      }
+      sort(paramType.conversions.begin(), paramType.conversions.end());
+      paramConversions[pi].push_back(paramType);
+   }
+}
+#endif

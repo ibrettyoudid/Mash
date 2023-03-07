@@ -39,6 +39,12 @@
     <ClCompile Include="TimerFrame.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="InterpS.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="any.h">
@@ -75,6 +81,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="make_vec.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="InterpS.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

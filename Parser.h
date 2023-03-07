@@ -188,20 +188,20 @@ struct Parser
    std::vector<LexFile*>     files;
    std::vector<LexFile*>     includeDirs;
 
-   std::string      fileName;
+   std::string fileName;
    LexFile*    file;
    iter        lastP;
    iter        p;
    iter        e;
    iter        lineStart;
-   int64_t         lineNo;
-   int64_t         savedStates;
+   int64_t     lineNo;
+   int64_t     savedStates;
    bool        parseEnd;
    bool        prep;
    bool        include;
-   int64_t         tentative;
-   int64_t         errors;
-   int64_t         lastError;
+   int64_t     tentative;
+   int64_t     errors;
+   int64_t     lastError;
    Language*   lang;
 
    Parser() : savedStates(0), tentative(0) {}

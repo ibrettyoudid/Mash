@@ -21,46 +21,48 @@ struct Module
    std::vector<int64_t> lines;
 
    LC       lcofpos(int64_t);
-   int64_t      posoflc(int64_t);
+   int64_t  posoflc(int64_t);
    void     getLines();
 };
 
 struct State
 {
    Module*  module;
-   int64_t      pos;
+   int64_t  pos;
    bool     startSingle;
    bool     startGroup;
    LC       min;
 
    State(Module* module) : module(module), pos(0), min(0, 0) {}
+
    State    advance(int64_t);
 };
 
-struct AST
+struct Span
 {
    Module*  module;
-   int64_t      sPos;
-   int64_t      ePos;
+   int64_t  sPos;
+   int64_t  ePos;
    //Rule*    rule;
 
-   AST(Module* module, int64_t sPos, int64_t ePos) : module(module), sPos(sPos), ePos(ePos) {}
+   Span(Module* module, int64_t sPos, int64_t ePos) : module(module), sPos(sPos), ePos(ePos) {}
+
+   std::string str() { return module->text.substr(sPos, ePos - sPos); }
 };
 
 struct ParseResult;
 
-struct Visitor;
+struct Iterator;
 
 struct Rule
 {
    std::string        name;
-   //std::vector<Rule*> parents;
    
    Rule() {}
    
    virtual  ParseResult*  parse (State st);
    virtual  ParseResult*  parse1(State st);
-   virtual  void          visit (Visitor* visitor) { }
+   virtual  void          accept(Iterator* iterator) {};
 
    Rule*    setRF(Any f);
    Rule*    addRF(Any f);
@@ -75,11 +77,42 @@ struct Terminal : public Rule
 {
 };
 
+struct Iterator
+{
+   virtual ~Iterator() {};
+
+   virtual void visit(Rule*& rule) = 0;
+};
+
+typedef std::map<std::string, Rule*> NameMap;
+
+struct CollectNamesIterator : public Iterator
+{
+   std::set<Rule*> ruleSet;
+   NameMap* nameMap;
+
+   CollectNamesIterator() : nameMap(new NameMap()) {}
+
+   virtual void visit(Rule*& rule);
+};
+
+struct ReplaceNamesIterator : public Iterator
+{
+   std::set<Rule*> ruleSet;
+   NameMap& nameMap;
+
+   ReplaceNamesIterator(NameMap& nameMap) : nameMap(nameMap) {}
+
+   virtual void visit(Rule*& rule);
+};
+
 struct Inner : public NonTerminal
 {
    Rule* inner;
 
    Inner(Rule* inner) : inner(inner) {}
+
+   virtual void accept(Iterator* iterator) { iterator->visit(inner); }
 };
 
 struct Elems : public NonTerminal
@@ -88,6 +121,8 @@ struct Elems : public NonTerminal
 
    Elems() {}
    Elems(std::vector<Rule*> elems) : elems(elems) {}
+
+   virtual void accept(Iterator* iterator) { for (auto &elem : elems) iterator->visit(elem); }
 };
 
 struct Epsilon : public Terminal
@@ -174,7 +209,25 @@ struct ApplyP : public Inner
    ApplyP(Any func, Rule* inner) : func(func), Inner(inner) {}
 
    ParseResult*  parse1(State st);
-   //        void  visit(Visitor* visitor);
+   //        void  visit(Iterator* iterator);
+};
+
+struct ApplyP2 : public Inner
+{
+   Any   func;
+
+   ApplyP2() : Inner(nullptr) {}
+   ApplyP2(Any func, Rule* inner) : func(func), Inner(inner) {}
+
+   ParseResult*  parse1(State st);
+   //        void  visit(Iterator* iterator);
+};
+
+struct ForwardTo : public NonTerminal
+{
+   std::string target;
+
+   ForwardTo(std::string target) : target(target) {}
 };
 
 struct Skip : public Inner
@@ -182,7 +235,7 @@ struct Skip : public Inner
    Skip(Rule* inner) : Inner(inner) {}
 
    ParseResult* parse1(State st);
-   //void visit(Visitor* visitor);
+   //void visit(Iterator* iterator);
 };
 
 /*
@@ -298,9 +351,11 @@ struct SkipE : public Expr
 
 struct WhiteSpaceE : public Expr
 {
-   std::string before;
-   Expr* expr;
-   std::string after;
+   Span  before;
+   Expr* inner;
+   Span  after;
+
+   WhiteSpaceE(Span before, Expr* inner, Span after) : before(before), inner(inner), after(after) {}
 };
 
 struct Literal : public Expr
@@ -312,6 +367,13 @@ struct Literal : public Expr
    {
       return value;
    }
+};
+
+struct Identifier : public Expr
+{
+   Span span;
+
+   Identifier(Span span) : span(span) {}
 };
 
 struct IfTerm

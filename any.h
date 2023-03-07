@@ -89,6 +89,7 @@ struct Ref
 
 struct Any
 {
+   typedef std::input_iterator_tag iterator_category;
    TypeInfo* typeInfo;
    void* ptr;
 
@@ -179,6 +180,13 @@ typedef std::multiset<TypePath*> TypePathList;
 std::string hex(unsigned char* b, unsigned char* e);
 void showhex(unsigned char* b, unsigned char* e);
 
+struct TypeConn
+{
+   TypeLinkList     bases;
+   TypeLinkList     derived;
+   TypeList         linear;
+};
+
 struct TypeInfo
 {
    std::string      name;
@@ -189,9 +197,8 @@ struct TypeInfo
    MemberList       members;
    MemberList       allMembers;
 
-   TypeLinkList     bases;
-   TypeLinkList     derived;
-   TypeList         linear;
+   TypeConn         main;
+   TypeConn         conv;
    TypePathList     layout;
 
    void     (*copyCon )(void* res, void* in, TypeInfo* ti);//set in getTypeBase
@@ -217,7 +224,7 @@ struct TypeInfo
    }
 
 
-   void        doC3Lin   ();
+   void        doC3Lin   (TypeConn TypeInfo::*conn);
    void        allocate  ();
    void        allocate2 (TypeInfo* derived, int64_t baseOffset, TypeLinkList& links);
    TypeInfo*   argType   (int64_t n, bool useReturnT);
@@ -565,6 +572,7 @@ struct DynamicCast
 };
 
 void addTypeLink(TypeInfo* base, TypeInfo* derived, LinkKind kind = lSub, int64_t offset = 0);
+void addTypeLinkConv(TypeInfo* base, TypeInfo* derived);
 
 template <class Base, class Derived>
 void addTypeLinkC(LinkKind kind = lSub, int64_t offset = 0)
@@ -576,8 +584,8 @@ void addTypeLinkC(LinkKind kind = lSub, int64_t offset = 0)
    tl.staticDown  = StaticCast <Base, Derived>::go;
    tl.dynamicUp   = DynamicCast<Derived, Base>::go;
    tl.dynamicDown = DynamicCast<Base, Derived>::go;
-   base->derived.push_back(tl);
-   derived->bases.push_back(tl);
+   base.main->derived.push_back(tl);
+   derived.main->bases.push_back(tl);
 }
 
 struct Symbol
@@ -734,7 +742,7 @@ Any::operator To&()
       o << "cannot remove more than 3 indirections: attempt to cast from " << typeInfo->getName() << " to " << toType1->getName();
       throw std::runtime_error(o.str());
    }
-   //below, the number of asterisks in the < > must equal the number of dereferences between return and static_cast (in order for the types to be correct)
+   //below, the number of asterisks in the < > must equal the number of dereferences between return and cast (in order for the types to be correct)
    switch (indirs)
    {
       //case -2:
@@ -1860,7 +1868,7 @@ struct Array
    {
       alloc();
    }
-   T& operator[](std::vector<int64_t> p)
+   T& operator[](const std::vector<int64_t>& p)
    {
       T* addr = mem;
       int64_t mult = 1;
@@ -1871,28 +1879,62 @@ struct Array
       }
       return *addr;
    }
+   std::vector<int64_t> getTableIndices(int64_t index)
+   {
+      std::vector<int64_t> res;
+      for (size_t d = 0; d < dimensions; ++d)
+      {
+         res.push_back(index % sizes[d]);
+         index /= sizes[d];
+      }
+      return res;
+   }
    void clear()
    {
       delete[] mem;
       mem = nullptr;
    }
+   T* begin()
+   {
+      return mem;
+   }
+   T* end()
+   {
+      return mem + totalSize;
+   }
 };
+
+struct MMParamType
+{
+   TypeInfo* type;
+   std::vector<std::pair<int64_t, TypeInfo*>> conversions;
+};
+
+typedef std::set<TypeInfo*> TypeSet2;
 
 struct MMBase
 {
-   int64_t          minArgs;
-   int64_t          maxArgs;
-   bool             useReturnT;
-   bool             useTable;
-   std::vector<Any> methods;
    std::string      name;
+   int64_t          minArgs = 0;
+   int64_t          maxArgs = 0;
+   int64_t          maxCost = 0;
+   bool             useReturnT = false;
+   bool             useTable   = false;
+   bool             useConversions = false;
+   bool             needsBuilding = false;
+   std::vector<Any> methods;
    Array<Any>       table;
-   std::vector<std::set<TypeInfo*>> paramTypes;
+   Array<int64_t>   costs;
+   std::vector<TypeSet2> paramTypeSets;
+   std::vector<TypeSet2> paramTypeSets2;
+   std::vector<TypeList> paramTypeLists;
+   std::vector<std::vector<MMParamType>> paramConversions;
+   std::vector<std::vector<MMParamType>> paramConversions2;
    int64_t          mmindex;
    static int64_t   mmcount;
    static std::set<MMBase*> mms;
 
-   MMBase(std::string _name = "") : name(_name), useReturnT(false), useTable(false), minArgs(0), maxArgs(0), mmindex(mmcount++)
+   MMBase(std::string _name = "") : name(_name), mmindex(mmcount++)
    {
       mms.insert(this);
    }
@@ -1900,253 +1942,81 @@ struct MMBase
    {
       mms.erase(this);
    }
+   void add(Any method);
+   int  compareMethods(Any& lhs, Any& rhs, TypeList &at);
+   void buildTable();
+   void findMostDerived(int64_t paramIndex, TypeInfo* type);
+   void fillParamTypesInOrder(int64_t paramIndex, TypeInfo* type);
+   void fillParamType(bool first, int64_t pi, int64_t ti, TypeInfo* t);
+   void simulate(std::vector<Any*> &validMethods, std::vector<TypeInfo*> &at, int64_t ai);
+   Any* getMethod(Any* args, int64_t nargs);
+   Any* getMethodFromTable(Any* args, int64_t nargs);
 };
 
-template <class Result>
+template <class R>
 struct Multimethod : public MMBase
 {
    Multimethod(std::string _name = "") : MMBase(_name)
    {
    }
-   void add(Any method)
+   R call(Any* args, int64_t nargs)
    {
-      TypeInfo* ti = method.typeInfo;
-      int64_t methodMaxArgs = method.maxArgs() + (useReturnT ? 1 : 0);
-      int64_t methodMinArgs = method.minArgs() + (useReturnT ? 1 : 0);
-      if (methods.size() == 0 || methodMaxArgs > maxArgs) maxArgs = methodMaxArgs;
-      if (methods.size() == 0 || methodMinArgs < minArgs) minArgs = methodMinArgs;
-      methods.push_back(method);
-   }
-   Result call(Any* args, int64_t nargs)
-   {
-      if (useTable)
-         return callT(args, nargs);
+      Any* addr = getMethod(args, nargs);
+      if (useReturnT)
+         return addr->call(args+1, nargs-1);
       else
-      {
-#define DEBUGMM
-#ifdef DEBUGMM
-         std::cerr << "MULTIMETHOD " << name << " CALLED WITH: ";
-         for (size_t ai = 0; ai < nargs; ++ai)
-            std::cerr << args[ai].typeName() << "   ";
-         std::cerr << std::endl;
-#endif   
-         for (size_t mi = 0; mi < methods.size(); ++mi)
-         {
-#ifdef DEBUGMM
-            std::cerr << "trying: ";
-            for (size_t ai = 0; ai < nargs; ++ai)
-               std::cerr << methods[mi].paramType(ai)->getName() << "   ";
-            std::cerr << std::endl;
-#endif
-            for (size_t ai = 0; ai < nargs; ++ai)
-            {
-               TypeInfo* fromt;
-               TypeInfo* tot;
-               if (useReturnT)
-               {
-                  if (ai == 0) tot = args[ai];
-                  else         tot = args[ai].typeInfo;
-                  fromt = methods[mi].paramType(ai - 1);
-               }
-               else
-               {
-                  fromt = args[ai].typeInfo;
-                  tot = methods[mi].paramType(ai);
-               }
-               #ifdef DEBUGMM
-               std::cerr << tot->name << "   ";
-               #endif
-               if (!(tot == tiAny || fromt->isPRTF(tot)))
-               {
-                  #ifdef DEBUGMM
-                  std::cerr << " FAIL arg = " << fromt->getName() << std::endl;
-                  #endif
-                  goto nextMethod2;
-               }
-            }
-            #ifdef DEBUGMM
-            std::cerr << std::endl << " *** MATCH ***" << std::endl;
-            #endif
-            if (useReturnT)
-               return methods[mi].call(args+1, nargs-1).as<Result>();
-            else
-               return methods[mi].call(args, nargs).as<Result>();
-   nextMethod2:;
-         }
-         throw "multimethod not applicable to type(s)";
-      }
+         return addr->call(args, nargs);
    }
-   Result operator()(Any arg0)
+   R operator()(Any arg0)
    {
       return call(&arg0, 1);
    }
-   Result operator()(Any arg0, Any arg1)
+   R operator()(Any arg0, Any arg1)
    {
       Any args[2] = { arg0, arg1 };
       return call(args, 2);
    }      
-   Result operator()(Any arg0, Any arg1, Any arg2)
+   R operator()(Any arg0, Any arg1, Any arg2)
    {
       Any args[3] = { arg0, arg1, arg2 };
       return call(args, 3);
    }
-   Result callT(Any* args, int64_t nargs)
-   {
-      std::vector<int64_t> indices(maxArgs);
-      if (useReturnT)
-      {
-         indices[0] = args[0].as<TypeInfo*>()->mmpindices[mmindex][0];
-         for (int64_t ai = 1; ai < nargs; ++ai)
-            indices[ai] = args[ai].typeInfo->mmpindices[mmindex][ai];
-         return table[indices].call(args+1, nargs-1);
-      }
-      else
-      {
-         for (int64_t ai = 0; ai < nargs; ++ai)
-            indices[ai] = args[ai].typeInfo->mmpindices[mmindex][ai];
-         return table[indices].call(args, nargs);
-      }
-   }
-   void insertParamType(int64_t pi, TypeInfo* t)
-   {
-      if (paramTypes[pi].insert(t).second)
-      { 
-         if (t->mmpindices.size() <= mmindex)
-            t->mmpindices.resize(mmindex + 1);
-         if (t->mmpindices[mmindex].size() <= pi)
-            t->mmpindices[mmindex].resize(pi + 1);
-         t->mmpindices[mmindex][pi] = paramTypes[pi].size() - 1;
-         //for (auto d : t->derived)
-         //   insertParamType(pi, d->derived);
-      }
-   }
-   void buildTable()
-   {
-      table.clear();
-      paramTypes.clear();
-      paramTypes.resize(maxArgs);
-      for (auto &m : methods)
-         for (size_t pi = 0; pi < m.typeInfo->members.size() + useReturnT; ++pi)
-            insertParamType(pi, m.paramType(pi, useReturnT));
+};
 
-      table.sizes.resize(maxArgs);
-      for (size_t pi = 0; pi < maxArgs; ++ pi)
-         table.sizes[pi] = paramTypes[pi].size();
-      table.alloc();
-      std::vector<Any*> validMethods;
-      for (auto &m : methods) validMethods.push_back(&m);//make a vector of pointers so we can easily test for equality
-      std::vector<TypeInfo*> at(maxArgs);
-      simulate(validMethods, at, 0);
-   }
-   void simulate(std::vector<Any*> &validMethods, std::vector<TypeInfo*> &at, int64_t ai)
+template <>
+struct Multimethod<void> : public MMBase
+{
+   Multimethod(std::string _name = "") : MMBase(_name)
    {
-#if 1
-      //step 1
-      if (ai < maxArgs)
-      {
-         for (auto at1 : paramTypes[ai])
-         {
-            std::vector<Any*> validMethodsNew;
-            at[ai] = at1;
-            for (auto m : validMethods)
-               if (hasLink(m->paramType(ai, useReturnT), at1))
-                  validMethodsNew.push_back(m);
-            simulate(validMethodsNew, at, ai + 1);
-         }
-      }
-      //step 2
+   }
+   void call(Any* args, int64_t nargs)
+   {
+      Any* addr = getMethod(args, nargs);
+      if (useReturnT)
+         addr->call(args+1, nargs-1);
       else
-      {
-         //at this point, validMethods is a list of the valid methods for the argument types in 'at'
-         std::vector<Any*> bestMethods(validMethods);
-         std::vector<std::set<TypeInfo*>> validParamTypes(maxArgs);
-         //get all the param types of the VALID methods
-         for (size_t ai2 = 0; ai2 < maxArgs; ++ai2)
-            for (auto m : validMethods)
-               validParamTypes[ai2].insert(m->paramType(ai2, useReturnT));
-         for (size_t ai2 = 0; ai2 < maxArgs; ++ai2)
-         {
-            auto atlb = at[ai2]->linear.begin();//atl = argument type linearisation
-            auto atle = at[ai2]->linear.end();
-            auto atlmin = atle;
-            TypeInfo* ptmin = nullptr;
-            for (auto pt : validParamTypes[ai2])
-            {
-               auto atl = std::find(atlb, atle, pt);
-               if (atl < atlmin)
-               {
-                  atlmin = atl;
-                  ptmin = pt;
-               }
-            }
-            if (!ptmin) throw std::runtime_error("Algorithm failure in multimethod::simulate - parameter type found in step 1 has seemingly disappeared in step 2");
-            std::vector<Any*> bestMethodsNew;
-            for (auto m : bestMethods)
-               if (m->paramType(ai2, useReturnT) == ptmin)
-                  bestMethodsNew.push_back(m);
-            bestMethods = std::move(bestMethodsNew);
-         }
-         if (bestMethods.size() == 1)
-         {
-            std::vector<int64_t> ati(maxArgs);
-            for (int64_t ai2 = 0; ai2 < maxArgs; ++ai2)
-               ati[ai2] = at[ai2]->mmpindices[mmindex][ai2];
-            table[ati] = *bestMethods.front();
-         }
-         else if (bestMethods.size() == 0)
-         {
-            std::cout << "warning: no best method in multimethod " << name << " for argument types ";
-            for (size_t ai2 = 0; ai2 < maxArgs; ++ai2)
-               std::cout << at[ai2]->getName() << "  ";
-            std::cout << std::endl;
-         }
-         else
-         {
-            std::cout << "very strange indeed!" << std::endl;
-         }
-      }
-      return;
-#endif
+         addr->call(args, nargs);
+   }
+   void operator()(Any arg0)
+   {
+      call(&arg0, 1);
+   }
+   void operator()(Any arg0, Any arg1)
+   {
+      Any args[2] = { arg0, arg1 };
+      call(args, 2);
+   }      
+   void operator()(Any arg0, Any arg1, Any arg2)
+   {
+      Any args[3] = { arg0, arg1, arg2 };
+      call(args, 3);
    }
 };
-/*
-* remember that actual arguments are copied to formal parameters
-* so arguments must be convertible to parameter types
-* so parameters must be a base of the arguments
-* 
-* thoughts on a faster algorithm
-* 
-* an argument list that is the same is an error, so ignore those
-* an argument that is not derived from the parameter is invalid
-* an argument list that is all the same or worse is replaced
-* an argument list that is all the same or better replaces
-* so that only leaves: a blocking argument list must be better on at least one argument and worse on at least one
-*                 and: a list with an argument that multiply inherits from two different parameter types (but could decide by linearisation)
-*
-* sort the methods by the type of each parameter
-* 
-* for each method
-*   mark the exact parameters in the table
-*   depth first search through derived classes of parameters (don't forget this is multi-dimensional due to multiple parameters)
-*     when we hit a type with a method with a parameter that is derived:
-*       stop and check the other parameters to see if it blocks or replaces
-*     what happens when we meet up with the search from another method with a parameter of a different base due to multiple inheritance?
-*        use linearisation to decide?
-*        how do we detect this?
-*
-* can initialise a const int64_t with an int64_t
-* cannot assign to a const int64_t with anything
-* 
-*                           can assign this
-*  to this         |int64_t *|const int64_t *|int64_t * const|const int64_t * const|
-*       int64_t *      |ia   |           |ia         |
-* const int64_t *      |
-*       int64_t * const|
-* const int64_t * const|
-*/
-#if 1
+
+typedef Multimethod<Any> MultimethodAny;
+#if 0
 template <>
-struct Multimethod<void> : public Multimethod<Any>
+struct MultimethodVoid : public Multimethod<Any>
 {
    Multimethod(std::string _name = "") : Multimethod<Any>(_name)
    {
@@ -2171,25 +2041,54 @@ struct Multimethod<void> : public Multimethod<Any>
    }      
 };
 #endif
-typedef Multimethod<Any> MultimethodAny;
+
+template <>
+struct getType<MMBase>
+{
+   static TypeInfo info()
+   {
+      TypeInfo fti(getTypeBase<MMBase>());
+      fti.multimethod = true;
+      //for (size_t i = 0; i < mm.nargs; ++i)
+      //   fti.members.add(getTypeAdd<Any>());
+      return fti;
+   }
+};
 
 template <class R>
 Any delegMM(Any* mm, Any* args, int64_t n)
 {
-   return mm->as<Multimethod<R> >().call(args, n);
+   return mm->as<Multimethod<R>>().call(args, n);
 }
 
+Any delegMMV(Any* mm, Any* args, int64_t n);
+
 template <class R>
-struct getType<Multimethod<R> >
+struct getType<Multimethod<R>>
 {
    static TypeInfo info()
    {
-      TypeInfo fti(getTypeBase<Multimethod<R> >());
+      TypeInfo fti(getTypeBase<Multimethod<R>>());
       fti.multimethod = true;
       fti.of = getTypeAdd<R>();
       //for (size_t i = 0; i < mm.nargs; ++i)
       //   fti.members.add(getTypeAdd<Any>());
       fti.delegPtr = delegMM<R>;
+      return fti;
+   }
+};
+
+template <>
+struct getType<Multimethod<void>>
+{
+   static TypeInfo info()
+   {
+      TypeInfo fti(getTypeBase<Multimethod<void>>());
+      fti.multimethod = true;
+      fti.of = getTypeAdd<void>();
+      //for (size_t i = 0; i < mm.nargs; ++i)
+      //   fti.members.add(getTypeAdd<Any>());
+      fti.delegPtr = delegMMV;
       return fti;
    }
 };
@@ -2200,6 +2099,8 @@ Any delegMMP(Any* mm, Any* args, int64_t n)
    return mm->as<Multimethod<R>*>()->call(args, n);
 }
 
+Any delegMMPV(Any* mm, Any* args, int64_t n);
+
 template <class R>
 struct getType<Multimethod<R>*>
 {
@@ -2207,12 +2108,29 @@ struct getType<Multimethod<R>*>
    {
       TypeInfo fti(getTypeBase<Multimethod<R>*>());
       fti.multimethod = true;
-      fti.of = getTypeAdd<R>();
+      //fti.of = getTypeAdd<R>();
       //for (size_t i = 0; i < mm.nargs; ++i)
       //   fti.members.add(getTypeAdd<Any>());
       fti.delegPtr = delegMMP<R>;
       fti.kind = kPointer;
-      fti.of = getTypeAdd<Multimethod<R> >();
+      fti.of = getTypeAdd<Multimethod<R>>();
+      return fti;
+   }
+};
+
+template <>
+struct getType<Multimethod<void>*>
+{
+   static TypeInfo info()
+   {
+      TypeInfo fti(getTypeBase<Multimethod<void>*>());
+      fti.multimethod = true;
+      //fti.of = getTypeAdd<R>();
+      //for (size_t i = 0; i < mm.nargs; ++i)
+      //   fti.members.add(getTypeAdd<Any>());
+      fti.delegPtr = delegMMPV;
+      fti.kind = kPointer;
+      fti.of = getTypeAdd<Multimethod<void>>();
       return fti;
    }
 };
@@ -2295,37 +2213,39 @@ struct Lambda;
 
 namespace List
 {
+   struct Closure
+   {
+      std::deque<Var>  params;
+      Var         rest;
+      Any         body;
+      Frame*      context;
+      int64_t         minArgs;
+      int64_t         maxArgs;
 
-struct Closure
-{
-   std::deque<Var>  params;
-   Var         rest;
-   Any         body;
-   Frame*      context;
-   int64_t         minArgs;
-   int64_t         maxArgs;
+      Closure() : context(nullptr), minArgs(0), maxArgs(0) {}
+      Closure(Any params, Any body, Frame* context = nullptr);
+   };
 
-   Closure() : context(nullptr), minArgs(0), maxArgs(0) {}
-   Closure(Any params, Any body, Frame* context = nullptr);
-};
-
-Any closureDeleg(Any* closure, Any* params, int64_t np);
-
+   Any closureDeleg(Any* closure, Any* params, int64_t np);
 }
 
-namespace Structure
+namespace Struct
 {
    struct Stack
    {
-      Stack* context;
+      Stack* parent;
+      Any    frame;
    };
 
    struct Closure
    {
       Lambda* lambda;
       Stack*  context;
+
+      Closure(Lambda* lambda, Stack* context) : lambda(lambda), context(context) {}
    };
 
+   Any closureDeleg(Any* closure, Any* args, int64_t na);
 }
 
 template <>

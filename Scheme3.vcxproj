@@ -119,6 +119,7 @@
       <SuppressStartupBanner>false</SuppressStartupBanner>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalOptions>/bigobj</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -145,6 +146,8 @@
     <ClCompile Include="any.cpp" />
     <ClCompile Include="classes.cpp" />
     <ClCompile Include="InterpL.cpp" />
+    <ClCompile Include="InterpS.cpp" />
+    <ClCompile Include="main.cpp" />
     <ClCompile Include="Parser.cpp" />
     <ClCompile Include="Parser2.cpp" />
     <ClCompile Include="stdafx.cpp" />
@@ -155,6 +158,7 @@
     <ClInclude Include="any.h" />
     <ClInclude Include="classes.h" />
     <ClInclude Include="InterpL.h" />
+    <ClInclude Include="InterpS.h" />
     <ClInclude Include="make_vec.h" />
     <ClInclude Include="make_vec_rule.h" />
     <ClInclude Include="Parser.h" />

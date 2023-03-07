@@ -20,6 +20,26 @@ LC Module::lcofpos(int64_t pos)
    return LC(l, pos - lines[l]);
 }
 
+void CollectNamesIterator::visit(Rule*& rule) 
+{ 
+   if (ruleSet.contains(rule)) return; 
+   ruleSet.insert(rule); 
+   if (!rule->name.empty()) (*nameMap)[rule->name] = rule;
+   rule->accept(this);
+}
+
+void ReplaceNamesIterator::visit(Rule*& rule) 
+{ 
+   if (ForwardTo* forwardTo = dynamic_cast<ForwardTo*>(rule)) 
+   { 
+      rule = nameMap[forwardTo->target]; 
+      //delete forwardTo; 
+   }
+   if (ruleSet.contains(rule)) return; 
+   ruleSet.insert(rule); 
+   rule->accept(this);
+}
+
 Epsilon::Epsilon()                      {}
 Range  ::Range  (char min, char max)    : min(min), max(max) {}
 Char   ::Char   (char c)                : c(c) {}
@@ -47,8 +67,9 @@ Seq*  seq(Rule* r0, Rule* r1, Rule* r2                    ) { return new Seq(vec
 Seq*  seq(Rule* r0, Rule* r1, Rule* r2, Rule* r3          ) { return new Seq(vec(r0,r1,r2,r3   )); }
 Seq*  seq(Rule* r0, Rule* r1, Rule* r2, Rule* r3, Rule* r4) { return new Seq(vec(r0,r1,r2,r3,r4)); }
 
-ApplyP *applyP(Any func, Rule* r    ) { return new ApplyP(func, r); }
-Skip   *skip  (          Rule* inner) { return new Skip  (inner  ); }
+ApplyP  *applyP (Any func, Rule* r    ) { return new ApplyP (func, r); }
+ApplyP2 *applyP2(Any func, Rule* r    ) { return new ApplyP2(func, r); }
+Skip    *skip   (          Rule* inner) { return new Skip   (inner  ); }
 /* 
 Any composeCall(Any f, Any g, Any x)
 {
@@ -239,6 +260,13 @@ ParseResult* ApplyP::parse1(State beginS)
    return new ParseResult(r->endS, func(r->ast));
 }
 
+ParseResult* ApplyP2::parse1(State beginS)
+{
+   ParseResult* r = inner->parse(beginS);
+   if (r == nullptr) return r;
+   return func(beginS, r->endS, r->ast);
+}
+
 ParseResult* Skip::parse1(State beginS)
 {
    ParseResult* r = inner->parse(beginS);
@@ -267,20 +295,32 @@ Rule* optional(Rule* opt)
 #if 1
 Vec manyR(Any in)
 {
-   vector<Any> out;
-   while (Vec* inv = in.any_cast<Vec>())
+   Vec out;
+   while (true)
    {
-      out.push_back((*inv)[0]);
-      in = (*inv)[1];
+      if (in.typeInfo == tiVec)
+      {
+         Vec invec(in);
+         out.push_back(invec[0]);
+         in = invec[1];
+      }
+      else
+         return out;
    }
-   return out;
 }
 
 Rule* many(Rule* ru)
 {
    Alt* a = alt();
-   *a = *alt(seq(ru, a), new Epsilon);
+   *a = *alt(seq(ru, a), epsilon);
    return applyP(manyR, a)->setName("many");
+}
+
+Rule* manyTill(Rule* ru, Rule* end)
+{
+   Alt* a = alt();
+   *a = *alt(skip(end), seq(ru, a));
+   return applyP(manyR, a)->setName("manyTill");
 }
 
 #else
@@ -353,19 +393,40 @@ Rule* chainl(Rule* term, Rule* op)
    return applyP(chainlR, seq(term, many(seq(op, term))))->setName("chainl");
 }
 
-Rule* whiteSpace = many(new Range(0, 32))->setName("whiteSpace");
-Rule* lineComment = seq(new String("--"), many(new Range(32, 255)), new Char('\n'))->setName("lineComment");
-Rule* blockComment1 = alt(new String("-}"), seq(new Range(0, 255)));
-Rule* blockComment = seq(new String("{-"), blockComment1)->setName("blockComment");
+ParseResult* asSpanR(State startS, State endS, Any ast)
+{
+   return new ParseResult(endS, Span(startS.module, startS.pos, endS.pos));
+}
+
+Rule* asSpan(Rule* inner)
+{
+   return applyP2(asSpanR, inner);
+}
+
+Rule* lineComment = seq(new String("--"), 
+                        many(new Range(32, 255)), 
+                        new Char('\n'))->setName("lineComment");
+
+Rule* blockComment = seq(new String("{-"), 
+                         manyTill(alt(new ForwardTo("blockComment"), new Range(0, 255)), new String("-}")))->setName("blockComment");
+
+Rule* toLineEnd = seq(many(new Char(' ')), 
+                      optional(seq(new String("--"), many(new Range(32, 255)))), 
+                      optional(new Char('\n')))->setName("lineSpace");
+
+Rule* whiteSpace = many(alt(new Char(' '), 
+                            new Char('\n'), 
+                            lineComment, 
+                            blockComment));
 
 Any lexemeR(Vec in)
 {
-   return in[1];
+   return new WhiteSpaceE(in[0], in[2], in[3]);
 }
 
 Rule* lexeme(Rule* lex)
 {
-   return applyP(lexemeR, seq(checkIndent, lex, whiteSpace));
+   return applyP(lexemeR, seq(asSpan(whiteSpace), checkIndent, lex, asSpan(toLineEnd)));
 }
 
 Rule* symbol(string s)
@@ -434,23 +495,23 @@ Any numberR(Vec in)
          mantissaS += decimalS;
          exponent -= decimalS.size();
       }
-      return doubleOfString(mantissaS) * pow(10, exponent);
+      return new Literal(doubleOfString(mantissaS) * pow(10, exponent));
    }
    else
-      return intOfString(mantissaS);
+      return new Literal(intOfString(mantissaS));
 }
 
-string identR(Vec v)
+Identifier* identR(Span s)
 {
-   return stringOfVec(v);
+   return new Identifier(s);
 }
 
 Lambda* lambdaR(Vec in)
 {
    TypeInfo* type = new TypeInfo();
-   for (string p : Vec(in[0]))
+   for (string p : Vec(in[1]))
       type->add(new Member(getSymbol(p), tiAny));
-   return new Lambda(type, in[1]);
+   return new Lambda(type, in[3]);
 }
 
 void parse(Rule* p, string s)
@@ -467,20 +528,22 @@ void parse(Rule* p, string s)
       cout << "parse failed" << endl;
 }   
 
+Rule* expr = chainl(chainl(new ForwardTo("term"), new String("*")), new String("+"))->setName("expr");
 
-Rule* expr = new ApplyP();//forward declaration needed to make a loop
+Rule* digit      = new Range('0', '9');
+Rule* upper      = new Range('A', 'Z');
+Rule* lower      = new Range('a', 'z');
+Rule* integer    = lexeme(applyP(integerR, many1(digit)))->setName("integer");
+Rule* number     = lexeme(applyP(numberR, seq(many1(digit), 
+                                              optional(seq(new Char('.'), many(digit))), 
+                                              optional(seq(new Char('e'), alt(new Char('+'), new Char('-'), epsilon), many(digit))))))->setName("number");
 
-Rule* integer    = lexeme(applyP(integerR, many1(new Range('0', '9'))))->setName("integer");
-Rule* number     = lexeme(applyP(numberR , seq(many1(new Range('0', '9')), 
-                                               optional(seq(new Char('.'), many(new Range('0', '9')))), 
-                                               optional(seq(new Char('e'), alt(new Char('+'), new Char('-'), epsilon), many(new Range('0', '9')))))))->setName("number");
+Rule* identifier = lexeme(applyP(identR, asSpan(seq(alt(upper, lower, new Char('_')), 
+                                                    many(alt(upper, lower, digit, new Char('_')))))))->setName("identifier");
 
-Rule* identifier = lexeme(applyP(identR  , seq(alt(new Range('a', 'z'), new Range('A', 'Z'), new Char('_')), 
-                                               many(alt(new Range('a', 'z'), new Range('A', 'Z'), new Range('0', '9'), new Char('_'))))))->setName("identifier");
-
-Rule* lambda     = applyP(lambdaR, seq(skip(symbol("\\")), 
+Rule* lambda     = applyP(lambdaR, seq(symbol("\\"), 
                                        many1(identifier), 
-                                       skip(symbol("->")), 
+                                       symbol("->"), 
                                        expr))
                                           ->setName("lambda");
 
@@ -502,8 +565,11 @@ Rule* terms      = many1(term)->setName("terms");
 
 void initParser2()
 {
-   *(ApplyP*)expr = *(ApplyP*)chainl(chainl(term, new String("*")), new String("+"))->setName("expr");//and then finish the loop
-   ((Seq*)((Alt*)blockComment1)->elems[1])->elems.push_back(blockComment1);
+   NameMap nameMap;
+   nameMap["blockComment"] = blockComment;
+   nameMap["term"] = term;
+   ReplaceNamesIterator rni(nameMap);
+   rni.visit(expr);
    TypeInfo* tiRule        = getTypeAdd<Rule       >();
    TypeInfo* tiTerminal    = getTypeAdd<Terminal   >();
    TypeInfo* tiNonTerminal = getTypeAdd<NonTerminal>();
@@ -516,6 +582,7 @@ void initParser2()
    TypeInfo* tiRange       = getTypeAdd<Range      >();
    TypeInfo* tiString      = getTypeAdd<String     >();
    TypeInfo* tiApplyP      = getTypeAdd<ApplyP     >();
+   TypeInfo* tiApplyP2     = getTypeAdd<ApplyP2    >();
    TypeInfo* tiIndentGroup = getTypeAdd<IndentGroup>();
    TypeInfo* tiIndentItem  = getTypeAdd<IndentItem >();
    TypeInfo* tiCheckIndent = getTypeAdd<CheckIndent>();
@@ -535,7 +602,7 @@ void initParser2()
    addTypeLink(tiTerminal   , tiCheckIndent);
    addMember(&Rule  ::name, "name");
    addMember(&Inner ::inner, "inner");
-   //addMember(&Elems ::elems, "elems");
+   addMember(&Elems ::elems, "elems");
    addMember(&Char  ::c   , "c"   );
    addMember(&Range ::min , "min" );
    addMember(&Range ::max , "max" );
@@ -552,10 +619,10 @@ void initParser2()
 
 void Module::getLines()
 {
-   int64_t l = text.size();
+   int64_t l = text.size() - 1;
    lines.clear();
    lines.push_back(0);
-   for (size_t i = 0; i < l-1; ++i)
+   for (int64_t i = 0; i < l; ++i)
       if (text[i] == '\n')
          lines.push_back(i + 1);
 }
