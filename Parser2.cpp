@@ -81,7 +81,7 @@ Any compose(Any f, Any g)
    return makePartApply(composeCall, f, g);
 }
 */
-
+/*
 Any callWithVecArgs(Any f, Vec args)
 {
    return f.call(&*args.begin(), args.size());
@@ -91,7 +91,7 @@ Any adaptVecArgs(Any f)
 {
    return makePartApply(callWithVecArgs, f);
 }
-
+*/
 Any constCall(Any r, Any x)
 {
    return r;

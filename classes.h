@@ -133,7 +133,7 @@ struct Compose
    Compose(Any f, Any g) : f(f), g(g) {}
 };
 
-Any delegCompose(Any* _compose, Any* args, int64_t n);
+Any delegCompose(Any* _compose, const Any** args, int64_t n);
 
 template <>
 struct getType<Compose*>

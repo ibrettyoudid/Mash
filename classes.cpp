@@ -1029,11 +1029,12 @@ Compose* compose(Any f, Any g)
    return new Compose(f, g);
 }
 
-Any delegCompose(Any* _compose, Any* args, int64_t n)
+Any delegCompose(Any* _compose, const Any** args, int64_t n)
 {
    Compose* compose = *_compose;
    Any gResult(compose->g.call(args, n));
-   return compose->f.call(&gResult, 1);
+   const Any* gr = *gResult;
+   return compose->f.call(&gr, 1);
 }
 #else
 List::Closure* compose(Any a, Any b)

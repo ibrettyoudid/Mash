@@ -37,10 +37,12 @@ namespace Struct
    {
       int64_t argCount = apply->elems.size();
       Any* argVals = new Any[argCount];
+      const Any** argPtrs = new const Any*[argCount];
       for (int64_t ai = 0; ai < argCount; ++ai)
       {
          argVals[ai] = eval(apply->elems[ai], stack);
+         argPtrs[ai] = &argVals[ai];
       }
-      return argVals[0].call(argVals + 1, argCount - 1);
+      return argVals[0].call(argPtrs + 1, argCount - 1);
    }
 }

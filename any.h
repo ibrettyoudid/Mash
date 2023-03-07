@@ -104,7 +104,7 @@ struct Any
    Any& operator= (Any&& rhs);
    Any(TypeInfo* typeInfo, void* rhs);
    ~Any();
-   Any call(Any* args, int64_t n);
+   Any call(const Any** args, int64_t n);
    Any operator()();
    Any operator()(const Any &arg0);
    Any operator()(const Any &arg0, const Any &arg1);
@@ -113,12 +113,12 @@ struct Any
    Any operator()(const Any &arg0, const Any &arg1, const Any &arg2, const Any &arg3, const Any &arg4);
    Any derp();
    //--------------------------------------------------------------------------- CONVERSION
-   template <class To>   operator To&();
-   template <class To>   To& as();
-   template <class To>   To* any_cast();
+   template <class To>   operator To&() const;
+   template <class To>   To& as() const;
+   template <class To>   To* any_cast() const;
    operator MMBase& ();
    //---------------------------------------------------------------------------------
-   std::string typeName  ();
+   std::string typeName  () const;
    TypeInfo*   paramType (int64_t n, bool useReturnT = false);
    bool        isPtrTo   (TypeInfo* other);
    bool        isRefTo   (TypeInfo* other);
@@ -680,7 +680,7 @@ template <class Type> Any::Any(Type& value, Ref)//creates a reference
 }
 #if 1
 template <class To>
-Any::operator To&()
+Any::operator To&() const
 {
    TypeInfo* toType = getTypeAdd<To>();
    TypeInfo* toType1 = toType;
@@ -855,7 +855,7 @@ operator To1*()
 }
 */
 template <class To>
-To& Any::as()
+To& Any::as() const
 {
    TypeInfo* typeInfoTo = getTypeAdd<To>();
    if (typeInfoTo == tiAny) return *reinterpret_cast<To*>(this);
@@ -867,7 +867,7 @@ To& Any::as()
    throw "type mismatch";
 }
 template <class To>
-To* Any::any_cast()
+To* Any::any_cast() const
 {
    TypeInfo* typeInfoTo = getTypeAdd<To>();
    //if (typeInfoTo == tiAny) return reinterpret_cast<To*>(this);
@@ -1949,8 +1949,8 @@ struct MMBase
    void fillParamTypesInOrder(int64_t paramIndex, TypeInfo* type);
    void fillParamType(bool first, int64_t pi, int64_t ti, TypeInfo* t);
    void simulate(std::vector<Any*> &validMethods, std::vector<TypeInfo*> &at, int64_t ai);
-   Any* getMethod(Any* args, int64_t nargs);
-   Any* getMethodFromTable(Any* args, int64_t nargs);
+   Any* getMethod(const Any** args, int64_t nargs);
+   Any* getMethodFromTable(const Any** args, int64_t nargs);
 };
 
 template <class R>
@@ -1970,7 +1970,7 @@ struct Multimethod : public MMBase
    R operator()(const Any& arg0)
    {
       const Any* args[1] = { &arg0 };
-      return call(&arg0, 1);
+      return call(args, 1);
    }
    R operator()(const Any& arg0, const Any& arg1)
    {
@@ -1990,7 +1990,7 @@ struct Multimethod<void> : public MMBase
    Multimethod(std::string _name = "") : MMBase(_name)
    {
    }
-   void call(Any* args, int64_t nargs)
+   void call(const Any** args, int64_t nargs)
    {
       Any* addr = getMethod(args, nargs);
       if (useReturnT)
@@ -1998,18 +1998,19 @@ struct Multimethod<void> : public MMBase
       else
          addr->call(args, nargs);
    }
-   void operator()(Any arg0)
+   void operator()(const Any& arg0)
    {
-      call(&arg0, 1);
+      const Any* args[1] = { &arg0 };
+      call(args, 1);
    }
-   void operator()(Any arg0, Any arg1)
+   void operator()(const Any& arg0, const Any& arg1)
    {
-      Any args[2] = { arg0, arg1 };
+      const Any* args[2] = { &arg0, &arg1 };
       call(args, 2);
    }      
-   void operator()(Any arg0, Any arg1, Any arg2)
+   void operator()(const Any& arg0, const Any& arg1, const Any& arg2)
    {
-      Any args[3] = { arg0, arg1, arg2 };
+      const Any* args[3] = { &arg0, &arg1, &arg2 };
       call(args, 3);
    }
 };
@@ -2155,7 +2156,7 @@ struct PartApply
 PartApply* makePartApply(Any f, Any a0);
 PartApply* makePartApply(Any f, Any a0, Any a1);
 
-Any delegPartApply(Any* cl, Any* args, int64_t n);
+Any delegPartApply(Any* cl, const Any** args, int64_t n);
 
 template <>
 struct getType<PartApply*>
@@ -2177,15 +2178,15 @@ typedef Any (*VFAux)(Any*, int64_t);
 
 struct VarFunc
 {
-   int64_t         minArgs;
-   int64_t         maxArgs;
+   int64_t     minArgs;
+   int64_t     maxArgs;
    Any         func;
    VarFunc(Any func, int64_t minArgs, int64_t maxArgs) : func(func), minArgs(minArgs), maxArgs(maxArgs)
    {
    }
 };
 
-Any delegVF(Any* fp, Any* args, int64_t n);
+Any delegVF(Any* fp, const Any** args, int64_t n);
 
 template <>
 struct getType<VarFunc>

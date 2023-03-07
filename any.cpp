@@ -207,7 +207,7 @@ Any::~Any()
 Any call(Any* f, Any* args, int64_t n)
 {
 }
-Any Any::call(Any* args, int64_t n)
+Any Any::call(const Any** args, int64_t n)
 {
    if (n < minArgs())
    return typeInfo->delegPtr(this, args, n);
@@ -218,7 +218,8 @@ Any Any::operator()()
 }
 Any Any::operator()(const Any &arg0)
 {
-   return typeInfo->delegPtr(this, &arg0, 1);
+   const Any *args[1] = { &arg0 };
+   return typeInfo->delegPtr(this, args, 1);
 }
 Any Any::operator()(const Any &arg0, const Any &arg1)
 {
@@ -253,7 +254,7 @@ Any::operator MMBase& ()
    throw "type mismatch";
 }
 //---------------------------------------------------------------------------
-std::string Any::typeName()
+std::string Any::typeName() const
 {
    return typeInfo->getName();
    if (typeInfo->name.substr(0, 7) == "struct ")
@@ -781,7 +782,7 @@ Any delegPartApply(Any* cl, Any* argsVar, int64_t n)
 {
    PartApply* partApply = *cl;
    size_t nArgsAll = partApply->argsFixed.size() + n;
-   Any* argsAll = new Any[nArgsAll];
+   const Any** argsAll = new const Any*[nArgsAll];
    size_t afi = 0;
    size_t avi = 0;
    for (size_t aai = 0; aai < nArgsAll; ++aai)
@@ -792,7 +793,7 @@ Any delegPartApply(Any* cl, Any* argsVar, int64_t n)
          argsAll[aai] = argsVar[avi++];
    }
    //Any res = clos->call(argsAll[0], &argsAll[1], nArgsAll - 1);
-   Any res = argsAll[0].call(&argsAll[1], nArgsAll - 1);
+   Any res = const_cast<Any*>(argsAll[0])->call(&argsAll[1], nArgsAll - 1);
    delete[] argsAll;
    return res;
 }
@@ -1103,7 +1104,7 @@ void MMBase::simulate(std::vector<Any*> &validMethods, std::vector<TypeInfo*> &a
    return;
 }
 
-Any* MMBase::getMethod(Any* args, int64_t nargs)
+Any* MMBase::getMethod(const Any** args, int64_t nargs)
 {
    if (useTable)
    {
@@ -1119,12 +1120,12 @@ Any* MMBase::getMethod(Any* args, int64_t nargs)
             TypeInfo* tot;
             if (useReturnT && ai == 0) 
             {
-               tot = args[ai];
+               tot = *args[ai];
                fromt = method.paramType(ai, useReturnT);
             }
             else
             {
-               fromt = args[ai].typeInfo;
+               fromt = args[ai]->typeInfo;
                tot = method.paramType(ai, useReturnT);
             }
             if (!(tot == tiAny || fromt->isPRTF(tot)))
@@ -1138,7 +1139,7 @@ Any* MMBase::getMethod(Any* args, int64_t nargs)
       std::cerr << "multimethod not applicable to type(s)" << endl;
       std::cerr << "MULTIMETHOD " << name << " CALLED WITH: ";
       for (size_t ai = 0; ai < nargs; ++ai)
-         std::cerr << args[ai].typeName() << "   ";
+         std::cerr << args[ai]->typeName() << "   ";
       std::cerr << std::endl;
       std::cerr << "multimethod contains these methods:" << std::endl;
       for (size_t mi = 0; mi < methods.size(); ++mi)
@@ -1148,7 +1149,7 @@ Any* MMBase::getMethod(Any* args, int64_t nargs)
 }
 
 
-Any* MMBase::getMethodFromTable(Any* args, int64_t nargs)
+Any* MMBase::getMethodFromTable(const Any** args, int64_t nargs)
 {
    if (needsBuilding)
       buildTable();
@@ -1156,11 +1157,11 @@ Any* MMBase::getMethodFromTable(Any* args, int64_t nargs)
    int64_t mult = 1;
    if (useReturnT)
    {
-      address += args[0].as<TypeInfo*>()->mmpindices[mmindex][0] * mult;
+      address += args[0]->as<TypeInfo*>()->mmpindices[mmindex][0] * mult;
       mult *= table.sizes[0];
       for (int64_t ai = 1; ai < nargs; ++ai)
       {
-         address += args[ai].typeInfo->mmpindices[mmindex][ai] * mult;
+         address += args[ai]->typeInfo->mmpindices[mmindex][ai] * mult;
          mult *= table.sizes[ai];
       }
    }
@@ -1168,7 +1169,7 @@ Any* MMBase::getMethodFromTable(Any* args, int64_t nargs)
    {
       for (int64_t ai = 0; ai < nargs; ++ai)
       {
-         address += args[ai].typeInfo->mmpindices[mmindex][ai] * mult;
+         address += args[ai]->typeInfo->mmpindices[mmindex][ai] * mult;
          mult *= table.sizes[ai];
       }
    }
