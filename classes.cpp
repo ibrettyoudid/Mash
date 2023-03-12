@@ -65,6 +65,7 @@ Any  operator* (Any a)        { return mderef(a); }
 
 
 TypeInfo* tiAny     ;
+TypeInfo* tiPH      ;
 TypeInfo* tiSymbol  ;
 TypeInfo* tiCons    ;
 TypeInfo* tiChar    ;
@@ -96,6 +97,11 @@ TypeInfo* tiTypeInfo;
 TypeInfo* tiVec;
 
 Frame* globalFrame;
+
+namespace Struct
+{
+   Any globalFrame;
+}
 
 set<void*> marked;
 map<void*, int64_t> cycles;
@@ -648,7 +654,7 @@ string toTextMultimethod(MMBase &mm, int64_t max)
       vector<int64_t> indices = mm.table.getTableIndices(tableIndex);
       Any m = mm.table[indices];
       string res1;
-      if (m.typeInfo->kind == kFunction)
+      if (m.callable())
       {
          for (int64_t pi = 0; pi < m.maxArgs(); ++pi)
          {
@@ -669,12 +675,12 @@ string toTextAny(Any a, int64_t max)
 {
    ostringstream o;
    if (a.typeInfo->kind == kFunction)
-      o << a.typeInfo->getName() << " = " << *(int64_t**)a.ptr;
+      o << a.typeInfo->getName() << " = " << *(int64_t**)a.payload;
    else
    {
       while (a.prDepth() > 0)
       {
-         o << *(int64_t**)a.ptr;
+         o << *(int64_t**)a.payload;
          switch (a.typeInfo->kind)
          {
             case kReference:
@@ -685,7 +691,7 @@ string toTextAny(Any a, int64_t max)
                break;
          }
          o << " -> ";
-         if (*(void**)a.ptr == nullptr)
+         if (*(void**)a.payload == nullptr)
          {
             o << "***";
             return o.str();
@@ -709,7 +715,7 @@ string toTextAny(Any a, int64_t max)
             //Any v(a[i]);
             //v = v.derp();
             //v.showhex();
-            o << toTextAux(a.member(i), max);
+            o << toTextAux(a.getMemberRef(i), max);
             //vars.push_back(Var(a.typeInfo->members[i]->name, a.typeInfo->members[i]->ptrToMember(a)));
          }
          o << "}";
@@ -856,6 +862,11 @@ TypeInfo* addContainer2()
    return getTypeAdd<C>();
 }
 
+Vec makeVec(Any* args, int64_t nargs)
+{
+   return Vec(args, args + nargs);
+}
+
 Cons* iterBeginCons(Cons* c)
 {
    return c;
@@ -931,13 +942,17 @@ void addContainer()
 Any addGlobal(string name, Any a)
 {
    globalFrame->vars.push_back(Var(name, a));
+   Member* member = new Member(getSymbol(name));
+   member->one = true;
+   member->value = a;
+   Struct::globalFrame.add(member, a);
    return a;
 }
 
 TypeInfo* addGlobal(string name, TypeInfo* a)
 {
    a->setName(name);
-   globalFrame->vars.push_back(Var(name, a));
+   addGlobal(name, Any(a));
    return a;
 }
 
@@ -945,7 +960,7 @@ template <class R>
 void addGlobal(string name, Multimethod<R>& m)
 {
    m.name = name;
-   globalFrame->vars.push_back(Var(name, &m));
+   addGlobal(name, Any(&m));
 }
 
 bool isNum(Any a)
@@ -1064,7 +1079,10 @@ void setup()
    globalFrame->context = nullptr;
    globalFrame->visible = false;
 
+   Struct::globalFrame.typeInfo = typeInfoInterp("globalFrameType");
+
    tiAny         = addGlobal("Any"        , getTypeAdd<Any       >());
+   tiPH          = addGlobal("PH"         , getTypeAdd<PH        >());
    tiParseEnd    = addGlobal("ParseEnd"   , getTypeAdd<ParseEnd  >());
    tiDouble      = addGlobal("double"     , getTypeAdd<double    >());
    tiFloat       = addGlobal("float"      , getTypeAdd<float     >());
@@ -1337,7 +1355,7 @@ void setup()
    addGlobal("second"  , second    );
    addGlobal("third"   , third     );
    addGlobal("fourth"  , fourth    );
-   addGlobal("list"    , VarFunc   (mylistN, 0, INT_MAX));
+   addGlobal("list"    , VarFunc   (mylistN, 0, LLONG_MAX));
    addGlobal("toText"  , toText    );
 
    addGlobal("insertElemX" , insertElemX );
@@ -1374,15 +1392,19 @@ void setup()
    length.add(lengthCons);
    addGlobal("length", length);
    addGlobal("names", fileNames);
-   toTextAux   .add(toTextAny);
    findCycles  .add(findCyclesAny);
-   madd.buildTable();
-   initParser2();
-
+   setupParser2();
+   toTextAux   .add(toTextAny);
+#ifdef TYPESET
+   for (auto p : typeSet) p->doC3Lin(&TypeInfo::main);
+   for (auto p : typeSet) p->doC3Lin(&TypeInfo::conv);
+   for (auto p : typeSet) p->allocate();
+#else
    for (auto p : typeMap) p.second->doC3Lin(&TypeInfo::main);
    for (auto p : typeMap) p.second->doC3Lin(&TypeInfo::conv);
    for (auto p : typeMap) p.second->allocate();
-
+#endif
+   madd.buildTable();
    convert.buildTable();
 }
 

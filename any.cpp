@@ -14,6 +14,41 @@ TypeSet typeSetR;
 int64_t MMBase::mmcount = 0;
 set<MMBase*> MMBase::mms;
 
+void error(std::string message)
+{
+   cout << message << endl;
+   throw std::runtime_error(message);
+}
+
+void copyConInterp(void* dest, void* src, TypeInfo* typeInfo)
+{
+   for (auto m : typeInfo->members.byOffset)
+      if (!m->one)
+         m->typeInfo->copyCon((char*)dest + m->offset, (char*)src + m->offset, m->typeInfo);
+}
+
+void destructInterp(void *ptr, TypeInfo* typeInfo)
+{
+   for (auto m : typeInfo->members.byOffset)
+      if (!m->one)
+         m->typeInfo->destruct((char*)ptr + m->offset, m->typeInfo);
+}
+
+TypeInfo* typeInfoInterp(std::string name)
+{
+   TypeInfo* typeInfo = new TypeInfo;
+   typeInfo->cpp = false;
+   typeInfo->cType = nullptr;
+   typeInfo->name = name;
+   typeInfo->fullName = name;
+   typeInfo->size = 0;
+   typeInfo->delegPtr = nullptr;
+   typeInfo->copyCon = copyConInterp;
+   typeInfo->destruct = destructInterp;
+   typeSet.insert(typeInfo);
+   return typeInfo;
+}
+
 void addTypeLink(TypeInfo* base, TypeInfo* derived, LinkKind kind, int64_t offset)
 {
    TypeLink* tl = new TypeLink(base, derived, kind, offset);
@@ -131,7 +166,8 @@ Member* MemberList::operator[](Symbol* symbol)
    {
       return *i;
    }
-   throw "member not found!";
+   return nullptr;
+   //throw "member not found!";
 }
 Member* MemberList::operator[](std::string name)
 {
@@ -140,7 +176,8 @@ Member* MemberList::operator[](std::string name)
    {
       return *i;
    }
-   throw "member not found!";
+   return nullptr;
+   //throw "member not found!";
 }
 
 Member* MemberList::operator[](int64_t n)
@@ -150,7 +187,7 @@ Member* MemberList::operator[](int64_t n)
 
 int64_t MemberList::size()
 {
-   return byOffset.size();
+   return byPtr.size();
 }
 
 void MemberList::clear()
@@ -161,48 +198,72 @@ void MemberList::clear()
    byOffset.clear();
 }
 
-Any::Any() : typeInfo(nullptr), ptr(nullptr)
+Any::Any() : typeInfo(nullptr), payload(nullptr)
 {
-   construct(0);
+   //construct(0);
 }
 
 Any::Any(const Any& rhs)
 {
-   typeInfo = rhs.typeInfo;
-   ptr = new char[typeInfo->size];
-   typeInfo->copyCon(ptr, rhs.ptr, typeInfo);
+   if (rhs.payload)
+   {
+      typeInfo = rhs.typeInfo;
+      payload = new char[typeInfo->size];
+      typeInfo->copyCon(payload, rhs.payload, typeInfo);
+   }
+   else
+   {
+      typeInfo = nullptr;
+      payload  = nullptr;
+   }
 }
 
-Any::Any(Any&& rhs) : typeInfo(rhs.typeInfo), ptr(rhs.ptr)
+Any::Any(Any&& rhs) : typeInfo(rhs.typeInfo), payload(rhs.payload)
 {
-   rhs.ptr = nullptr;
+   rhs.payload = nullptr;
 }  
 
 Any& Any::operator=(const Any& rhs)
 {
-   delete[] static_cast<char*>(ptr);
+   if (payload)
+   {
+      typeInfo->destruct(payload, typeInfo);
+      delete[] static_cast<char*>(payload);
+   }
    typeInfo = rhs.typeInfo;
-   ptr = new char[typeInfo->size];
-   typeInfo->copyCon(ptr, rhs.ptr, typeInfo);
+   payload = new char[typeInfo->size];
+   typeInfo->copyCon(payload, rhs.payload, typeInfo);
    return *this;
 }
 Any& Any::operator=(Any&& rhs)
 {
-   delete[] static_cast<char*>(ptr);
+   if (payload)
+   {
+      typeInfo->destruct(payload, typeInfo);
+      delete[] static_cast<char*>(payload);
+   }
    typeInfo = rhs.typeInfo;
-   ptr = rhs.ptr;
-   rhs.ptr = nullptr;
+   payload = rhs.payload;
+   rhs.payload = nullptr;
    return *this;
 }
 
 Any::Any(TypeInfo* typeInfo, void* rhs) : typeInfo(typeInfo)
 {
-   ptr = new char[typeInfo->size];//creates a copy on construction
-   typeInfo->copyCon(ptr, rhs, typeInfo);
+   payload = new char[typeInfo->size];//creates a copy on construction
+   typeInfo->copyCon(payload, rhs, typeInfo);
 }
 Any::~Any()
 {
-   delete[] static_cast<char*>(ptr);
+   if (payload)
+   { 
+      typeInfo->destruct(payload, typeInfo);
+      delete[] static_cast<char*>(payload);
+   }
+}
+bool Any::empty()
+{
+   return !payload;
 }
 Any Any::call(Any* args, int64_t n)
 {
@@ -239,13 +300,28 @@ Any Any::operator()(Any arg0, Any arg1, Any arg2, Any arg3, Any arg4)
 //--------------------------------------------------------------------------- CONVERSION
 Any Any::derp()
 {
-   return Any(typeInfo->of, *(void**)ptr);
+   return Any(typeInfo->of, *(void**)payload);
+}
+Any Any::deany()//denest a nested any
+{
+   if (typeInfo == tiAny)
+      return Any(((Any*)payload)->typeInfo, ((Any*)payload)->payload);
+   else
+      throw "not an Any!";
+}
+Any Any::ptrTo()
+{
+   return Any(typeInfo->ptr, &payload);
+}
+Any Any::refTo()
+{
+   return Any(typeInfo->ref, &payload);
 }
 Any::operator MMBase& ()
 {
-   if (typeInfo->kind == kPointer && typeInfo->of->multimethod) return **static_cast<MMBase**>(ptr);
-   if (typeInfo->multimethod) return *static_cast<MMBase*>(ptr);
-   std::cout << TS + "type mismatch: casting " + typeInfo->name + " to MMBase&" << std::endl;
+   if (typeInfo->kind == kPointer && typeInfo->of->multimethod) return **static_cast<MMBase**>(payload);
+   if (typeInfo->multimethod) return *static_cast<MMBase*>(payload);
+   std::cout << TS + "type mismatch: casting " + typeInfo->getName() + " to MMBase&" << std::endl;
    throw "type mismatch";
 }
 //---------------------------------------------------------------------------
@@ -277,7 +353,8 @@ bool Any::isPRTF(TypeInfo* other)
 }
 bool Any::callable()
 {
-   return typeInfo == tiListClosure || typeInfo == tiStructClosure || typeInfo == tiVarFunc || typeInfo->multimethod || typeInfo->kind == kFunction;
+   return payload && typeInfo->delegPtr;
+   //return typeInfo == tiListClosure || typeInfo == tiStructClosure || typeInfo == tiVarFunc || typeInfo->multimethod || typeInfo->kind == kFunction;
 }
 
 int64_t Any::maxArgs()
@@ -340,7 +417,7 @@ void showhex(unsigned char* b, unsigned char* e)
 
 string Any::hex()
 {
-   unsigned char* b = (unsigned char*)ptr;
+   unsigned char* b = (unsigned char*)payload;
    unsigned char* e = b + typeInfo->size;
    return ::hex(b, e);
 }
@@ -398,57 +475,115 @@ int64_t Any::prDepth()
    return count;
 }
 
-Any Any::add(Member* m, Any value)
+void Any::add(Member* m, Any value)
 {
-
-   TypeInfo* typeInfoNew = new TypeInfo(*typeInfo);
-   typeInfoNew->add(m);
-   void* ptrNew = new char[typeInfoNew->size];
-   typeInfo->copyCon(ptrNew, ptr, typeInfo);
-   delete[](ptr);
-   ptr = ptrNew;
-   typeInfo = typeInfoNew;
-   m->setMember(m, *this, value);
-   return value;
+   if (m->one)
+   {
+      //m->typeInfo = m->value.typeInfo;
+      typeInfo->add(m);
+   }
+   else
+   {
+      TypeInfo* typeInfoNew = new TypeInfo(*typeInfo);
+      typeInfoNew->add(m);
+      void* ptrNew = new char[typeInfoNew->size];
+      typeInfo->copyCon(ptrNew, payload, typeInfo);
+      delete[] payload;
+      payload = ptrNew;
+      typeInfo = typeInfoNew;
+      m->setMember(m, *this, value);
+   }
 }
 
-Any Any::member(Member* m)
+Any Any::getMember(Member* m)
+{
+   if (m->one)
+      return m->value;
+   else
+      return (*m->getMember)(m, *this);
+}
+
+Any Any::getMemberRef(Member* m)
 {
 #if 0
    TypeInfo* tiNew = new TypeInfo;
    tiNew->kind = kReference;
    tiNew->of = typeInfo;
    tiNew->copyCon = CopyCon<void*>::go;
-   tiNew->destroy = destroynothing;
+   tiNew->destruct= destructnothing;
    tiNew->delegPtr = nullptr;
    tiNew->size = sizeof(void*);
    //TypeInfo* typeIndex = *typeSetR.find(typeInfo->cType);
    char* ptrNew = reinterpret_cast<char*>(ptr) + m->offset;
    return Any(tiNew, reinterpret_cast<void*>(&ptrNew));
 #else
-   return (*m->getMemberRef)(m, *this);
+   if (m->one)
+      return m->value;
+   else if (typeInfo->cpp)
+      return (*m->getMemberRef)(m, *this);
+   else
+   {
+      void *addr = getMemberAddress(m);
+      return Any(m->typeInfo->ref, &addr);
+   }
 #endif
 }
 
-Any Any::member(Symbol* symbol)
+Any Any::getMemberPtr(Member* m)
 {
-   Member* m = (*typeInfo)[symbol];
-   return member(m);
+   if (m->one)
+      return m->value;
+   else
+      return (*m->getMember)(m, *this);
+}
+
+void Any::setMember(Member* m, Any value)
+{
+   if (m->one)
+      m->value = value;
+   else
+      (*m->setMember)(m, *this, value);
+}
+
+Any Any::getMemberRef(Symbol* symbol)
+{
+   return getMemberRef(findMember(symbol));
    //return (*m->getMemberRef)(m, *this);
 }
 
-Any Any::member(std::string name)
+Any Any::getMemberRef(std::string name)
 {
-   Member* m = (*typeInfo)[name];
-   return member(m);
+   return getMemberRef(findMember(name));
    //return (*m->getMemberRef)(m, *this);
 }
 
-Any Any::member(int64_t n)
+Any Any::getMemberRef(int64_t n)
 {
-   Member* m = (*typeInfo)[n];
-   return member(m);
+   return getMemberRef(findMember(n));
    //return (*m->getMemberRef)(m, *this);
+}
+
+Member* Any::findMember(Symbol* symbol)
+{
+   return (*typeInfo)[symbol];
+}
+
+Member* Any::findMember(std::string name)
+{
+   return (*typeInfo)[name];
+}
+
+Member* Any::findMember(int64_t n)
+{
+   return (*typeInfo)[n];
+}
+
+void* Any::getMemberAddress(Member* m)
+{
+   if (m->one)
+      return m->value.payload;
+   else
+      return (char*)payload + m->offset;
 }
 
 void TypeInfo::doC3Lin(TypeConn TypeInfo::* conn)
@@ -526,9 +661,12 @@ void TypeInfo::allocate()
 
       for (auto m : members.byOffset)
       {
-         m->offset = size;
-         m->typeInfo->allocate();
-         size += m->typeInfo->size;
+         if (!m->one)
+         {
+            m->offset = size;
+            m->typeInfo->allocate();
+            size += m->typeInfo->size;
+         }
       }
    }
    layout.clear();
@@ -554,13 +692,25 @@ void TypeInfo::allocate2(TypeInfo* derived, int64_t baseOffset, TypeLinkList& li
 
    for (auto m : members.byOffset)
    {
-      Member* newM = new Member(m->symbol, m->typeInfo, baseOffset + m->offset, m->ptrToMember);
+#if 0
+      Member* newM = new Member(m->symbol, m->typeInfo, m->one ? 0 : (baseOffset + m->offset), m->ptrToMember);
       newM->links = links;
       newM->getMember = m->getMember;
       newM->getMemberRef = m->getMemberRef;
       newM->setMember = m->setMember;
       newM->ptrToMember = m->ptrToMember;
       derived->allMembers.add(newM);
+#else
+      if (m->one)
+         derived->allMembers.add(m);
+      else
+      {
+         Member* newM = new Member(*m);
+         newM->offset = baseOffset + m->offset;
+         newM->links  = links;
+         derived->allMembers.add(newM);
+      }
+#endif
    }
 }
 
@@ -597,6 +747,69 @@ int64_t indexLink(TypeInfo* base, TypeInfo* derived)
    return -1;
 }
 
+bool canCast(TypeInfo* toType, TypeInfo* fromType)
+{
+   TypeInfo* toType1 = toType;
+   TypeInfo* fromType1 = fromType;
+   int64_t toRL = 1;//toRL can only be 0 or 1 and it makes no difference to the code required, except that adding more than one level of indirection will be bad
+   int64_t toPL = 0;
+   while (true)
+   {
+      if (toType->kind == kReference)
+      {
+         toType = toType->of;
+         ++toRL;
+      }
+      else if (toType->kind == kPointer)
+      {
+         toType = toType->of;
+         ++toPL;
+      }
+      else
+         break;
+   }
+   int64_t fromRL = 0;
+   int64_t fromPL = 0;
+   while (true)
+   {
+      if (fromType->kind == kReference)
+      {
+         fromType = fromType->of;
+         ++fromRL;
+      }
+      else if (fromType->kind == kPointer)
+      {
+         fromType = fromType->of;
+         ++fromPL;
+      }
+      else
+         break;
+   }
+   //maybe put something in to disallow slicing
+   if (!hasLink(toType, fromType) && toType != tiAny)//only allow conversions from derived to base
+   {
+      //std::ostringstream o;
+      //o << "types unrelated: attempt to cast from " << fromType1->getName() << " to " << toType1->getName();
+      //std::cout << o.str() << std::endl;
+      return false;
+   }
+   int64_t indirs = fromRL + fromPL - toPL;
+   if (indirs < -1)
+   {
+      //std::ostringstream o;
+      //o << "cannot add more than 1 indirection: attempt to cast from " << fromType1->getName() << " to " << toType1->getName();
+      //std::cout << o.str() << std::endl;
+      return false;
+   }
+   if (indirs > 3)
+   {
+      //std::ostringstream o;
+      //o << "cannot remove more than 3 indirections: attempt to cast from " << fromType1->getName() << " to " << toType1->getName();
+      //std::cout << o.str() << std::endl;
+      return false;
+   }
+   return true;
+}
 /*
 void addMember(Any member, string name)
 {
@@ -718,16 +931,16 @@ std::string TypeInfo::getName()
       o << this->name;
       break;
    case kReference:
-      o << "&" << of->getName();
+      o << "& " << of->getName();
       break;
    case kPointer:
-      o << "*" << of->getName();
+      o << "* " << of->getName();
       break;
    case kPtrMem:
       o << members.byOffset[0]->typeInfo->name << "::* " << of->getName();
       break;
    case kArray:
-      o << "[" << count << "]" << of->getName();
+      o << "[" << count << "] " << of->getName();
       break;
    case kFunction:
       o << "*function(";
@@ -751,8 +964,11 @@ TypeInfo* TypeInfo::setName(string s)
 }
 Member* TypeInfo::add(Member* m)
 {
-   m->offset = size;
-   size += m->typeInfo->size;
+   if (!m->one)
+   {
+      m->offset = size;
+      size += m->typeInfo->size;
+   }
    return members.add(m);
 }
 Member* TypeInfo::operator[](Symbol* s)
@@ -767,55 +983,117 @@ Member* TypeInfo::operator[](int64_t n)
 {
    return allMembers[n];
 }
-      
 
 MissingArg missingArg;
-MissingArg mA;
+MissingArg _;
 
 Any delegPartApply(Any* cl, Any* argsVar, int64_t n)
 {
-   PartApply* clos = *cl;
-   size_t nArgsAll = clos->argsFixed.size() + n;
+   PartApply* pa = *cl;
+   size_t nArgsAll = pa->argsFixed.size() + n;
    Any* argsAll = new Any[nArgsAll];
    size_t afi = 0;
    size_t avi = 0;
    for (size_t aai = 0; aai < nArgsAll; ++aai)
    {
-      if (clos->pArgsFixed & (1 << aai))
-         argsAll[aai] = clos->argsFixed[afi++];
+      if (pa->pArgsFixed >> aai & 1LL)
+         argsAll[aai] = pa->argsFixed[afi++];
       else
          argsAll[aai] = argsVar[avi++];
    }
    //Any res = clos->call(argsAll[0], &argsAll[1], nArgsAll - 1);
-   Any res = argsAll[0].call(&argsAll[1], nArgsAll - 1);
+   Any res = argsAll[0].call(argsAll + 1, nArgsAll - 1);
    delete[] argsAll;
    return res;
 }
-
-PartApply* makePartApply(Any f, Any a0)
+//pArgsFixed is binary defining which args are fixed
+//bit 0 is the function itself and bits 1..n are arguments 1..n
+PartApply* partApply(MissingArg, Any a0)
 {
    PartApply* res = new PartApply;
-   res->pArgsFixed = 3;//binary - means members 0 and 1 are fixed
-   res->argsFixed.push_back(f);
+   res->pArgsFixed = 2;
    res->argsFixed.push_back(a0);
-   res->delegPtr = f.typeInfo->delegPtr;
    return res;
 }
 
-PartApply* makePartApply(Any f, Any a0, Any a1)
+PartApply* partApply(Any fn, Any a0)
+{
+   PartApply* res = new PartApply;
+   res->pArgsFixed = 3;//binary - means members 0 and 1 are fixed
+   res->argsFixed.push_back(fn);
+   res->argsFixed.push_back(a0);
+   return res;
+}
+
+PartApply* partApply(MissingArg, MissingArg, Any a1)
+{
+   PartApply* res = new PartApply;
+   res->pArgsFixed = 4;
+   res->argsFixed.push_back(a1);
+   return res;
+}
+
+PartApply* partApply(Any fn, MissingArg, Any a1)
+{
+   PartApply* res = new PartApply;
+   res->pArgsFixed = 5;
+   res->argsFixed.push_back(fn);
+   res->argsFixed.push_back(a1);
+   return res;
+}
+
+PartApply* partApply(MissingArg, Any a0, Any a1)
+{
+   PartApply* res = new PartApply;
+   res->pArgsFixed = 6;//binary - means members 0, 1 & 2 are fixed
+   res->argsFixed.push_back(a0);
+   res->argsFixed.push_back(a1);
+   return res;
+}
+
+PartApply* partApply(Any fn, Any a0, Any a1)
 {
    PartApply* res = new PartApply;
    res->pArgsFixed = 7;//binary - means members 0, 1 & 2 are fixed
-   res->argsFixed.push_back(f);
+   res->argsFixed.push_back(fn);
    res->argsFixed.push_back(a0);
    res->argsFixed.push_back(a1);
-   res->delegPtr = f.typeInfo->delegPtr;
    return res;
+}
+
+Any delegBind(Any* cl, Any* args, int64_t nargs)
+{
+   Bind* bi = *cl;
+   Vec argsOut;
+   for (auto& param : bi->params)
+   {
+      if (param.typeInfo == tiPH)
+      {
+         int64_t n = param.as<PH>().n;
+         if (n >= nargs)
+            throw "not enough arguments passed";
+         argsOut.push_back(args[n]);
+      }
+      else
+         argsOut.push_back(param);
+   }
+   return argsOut[0].call(&argsOut[1], bi->params.size() - 1);
+}
+
+Any bind(Any* args, int64_t nargs)
+{
+   return new Bind(Vec(args, args + nargs));
 }
 
 extern TypeInfo* tiListClosure;
 extern TypeInfo* tiStructClosure;
 extern TypeInfo* tiVarFunc;
+
+template <typename F>
+Any functor(F f)
+{
+   return partApply(&F::operator(), f);
+}
 
 Any delegVF(Any* fp, Any* args, int64_t n)
 {
@@ -837,7 +1115,7 @@ void MMBase::add(Any method)
    methods.push_back(method);
    needsBuilding = true;
 }
-int MMBase::compareMethods(Any& lhs, Any& rhs, TypeList &at)
+int64_t MMBase::compareMethods(Any& lhs, Any& rhs, TypeList &at)
 {
    if (useReturnT)
    {
@@ -961,10 +1239,13 @@ void MMBase::buildTable()
                      ati2[pi] = cb->base->mmpindices[mmindex][pi];
                      Any prevCell = table[ati2];
                      Vec newMethods;
-                     if (prevCell.typeInfo->kind == kFunction)
-                        newMethods.push_back(prevCell);
-                     else if (prevCell.typeInfo == tiVec)
-                        newMethods = Vec(prevCell);
+                     if (!prevCell.empty())
+                     {
+                        if (prevCell.typeInfo->kind == kFunction)
+                           newMethods.push_back(prevCell);
+                        else if (prevCell.typeInfo == tiVec)
+                           newMethods = Vec(prevCell);
+                     }
                      if (newMethods.size() > 0) 
                      {
                         for (auto &newMethod : newMethods)
@@ -972,7 +1253,7 @@ void MMBase::buildTable()
                            bool add = true;
                            for (int64_t bmi = bestMethods.size() - 1; bmi >= 0; --bmi)
                            {
-                              int c = compareMethods(newMethod, bestMethods[bmi], at);
+                              int64_t c = compareMethods(newMethod, bestMethods[bmi], at);
                               if (c < 0)
                                  bestMethods.erase(bestMethods.begin() + bmi);
                               else if (c > 0)
@@ -1014,6 +1295,7 @@ void MMBase::buildTable()
    for (auto &m : methods) validMethods.push_back(&m);//make a vector of pointers so we can easily test for equality
    simulate(validMethods, at, 0);
 #endif
+   needsBuilding = false;
 }
 void MMBase::fillParamType(bool first, int64_t paramIndex, int64_t typeIndex, TypeInfo* type)
 {
@@ -1023,6 +1305,10 @@ void MMBase::fillParamType(bool first, int64_t paramIndex, int64_t typeIndex, Ty
    if (type->mmpindices[mmindex].size() <= paramIndex)
       type->mmpindices[mmindex].resize(paramIndex + 1, -1);
    type->mmpindices[mmindex][paramIndex] = typeIndex;
+   if (type->ref)
+      fillParamType(first, paramIndex, typeIndex, type->ref);//ref to type goes to same method
+   if (type->ptr)
+      fillParamType(first, paramIndex, typeIndex, type->ptr);//ptr to type goes to same method
    for (auto d : type->conv.derived)
       fillParamType(false, paramIndex, typeIndex, d->derived);
 }
@@ -1122,7 +1408,7 @@ Any* MMBase::getMethod(Any* args, int64_t nargs)
                fromt = args[ai].typeInfo;
                tot = method.paramType(ai, useReturnT);
             }
-            if (!(tot == tiAny || fromt->isPRTF(tot)))
+            if (!canCast(tot, fromt))
             {
                goto nextMethod2;
             }
@@ -1163,7 +1449,28 @@ Any* MMBase::getMethodFromTable(Any* args, int64_t nargs)
    {
       for (int64_t ai = 0; ai < nargs; ++ai)
       {
-         address += args[ai].typeInfo->mmpindices[mmindex][ai] * mult;
+         //TypeInfo* typeInfo = args[ai].typeInfo;
+         while (true)
+         {
+            vector<vector<int64_t>>& mmpindices(args[ai].typeInfo->mmpindices);
+            if (mmpindices.size() > mmindex && mmpindices[mmindex].size() > ai)
+            {
+               address += mmpindices[mmindex][ai] * mult;
+               break;
+            }
+            else if (args[ai].typeInfo->of == tiAny)
+               args[ai] = args[ai].derp();
+            else if (args[ai].typeInfo == tiAny)
+               args[ai] = args[ai].deany();
+            else
+               throw "MULTIMETHOD NOT APPLICABLE TO TYPE";
+            /*
+            if (typeInfo->of == tiAny)
+               typeInfo = typeInfo->of;
+            else if (typeInfo == tiAny)
+               typeInfo = 
+            */
+         }
          mult *= table.sizes[ai];
       }
    }

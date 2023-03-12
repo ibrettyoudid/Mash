@@ -48,6 +48,7 @@ struct Span
    Span(Module* module, int64_t sPos, int64_t ePos) : module(module), sPos(sPos), ePos(ePos) {}
 
    std::string str() { return module->text.substr(sPos, ePos - sPos); }
+   int64_t     size() { return ePos - sPos; }
 };
 
 struct ParseResult;
@@ -247,80 +248,6 @@ easy to add new types
 Cons:
 not type safe
 */
-#if 0
-struct Expr;
-
-struct ParseResult
-{
-   State  endS;   //this is needed for parser to work
-   Any    ast;
-
-   //ParseResult() {}
-   ParseResult(State endS, Any a) : endS(endS), ast(a) {}
-};
-
-struct Expr
-{
-   virtual Any eval(Any) = 0;
-};
-
-struct Literal : public Expr
-{
-   Any    value;
-   Literal(Any v) : value(v) {}
-
-   Any eval(Any)
-   {
-      return value;
-   }
-};
-
-struct IfTerm
-{
-   Any test;
-   Any eval;
-
-   IfTerm(Any test, Any eval) : test(test), eval(eval) {}
-};
-
-struct If : public Expr
-{
-   Vec terms;
-   Any else_;
-
-   If(Vec terms, Any else_) : terms(terms), else_(else_) {}
-};
-
-struct CaseTerm : public Expr
-{
-   Any match;
-   Any eval;
-
-   CaseTerm(Any match, Any eval) : match(match), eval(eval) { }
-}; 
-
-struct Case : public Expr
-{
-   Vec terms;
-   Any else_;
-
-   If(Vec terms, Any else_) : terms(terms), else_(else_) {}
-};
-
-struct ApplyAST : public Expr
-{
-   Vec elems;
-
-   ApplyAST(Vec elems) : elems(elems) {}
-};
-
-struct Lambda : public Expr
-{
-   std::vector<string> arguments;
-   Any            body;
-   Lambda* context;
-};
-#else
 struct Expr;
 
 struct ParseResult
@@ -332,9 +259,17 @@ struct ParseResult
    ParseResult(State endS, Any ast) : endS(endS), ast(ast) {}
 };
 
+struct ExprIterator
+{
+   virtual ~ExprIterator() {};
+
+   virtual void visit(Expr* expr) = 0;
+};
+
 struct Expr
 {
-//   virtual Any eval(Expr*);
+   virtual      ~Expr () {}
+   virtual void accept(ExprIterator* iterator) {};
 };
 
 struct EpsilonE : public Expr
@@ -352,17 +287,16 @@ struct SkipE : public Expr
 struct WhiteSpaceE : public Expr
 {
    Span  before;
-   Expr* inner;
+   Any   inner;
    Span  after;
-
-   WhiteSpaceE(Span before, Expr* inner, Span after) : before(before), inner(inner), after(after) {}
+   WhiteSpaceE(Span before, Any inner, Span after) : before(before), inner(inner), after(after) {}
+   virtual void accept(ExprIterator* iterator) { iterator->visit(inner); };
 };
 
 struct Literal : public Expr
 {
    Any value;
    Literal(Any v) : value(v) {}
-
    Any eval(Expr*)
    {
       return value;
@@ -372,31 +306,31 @@ struct Literal : public Expr
 struct Identifier : public Expr
 {
    Span span;
-
+   Member* member = nullptr;
+   int64_t frameN;
    Identifier(Span span) : span(span) {}
 };
 
-struct IfTerm
+struct IfTerm : public Expr
 {
    Expr* test;
    Expr* eval;
-
    IfTerm(Expr* test, Expr* eval) : test(test), eval(eval) {}
+   virtual void accept(ExprIterator* iterator) { iterator->visit(test); iterator->visit(eval); };
 };
 
 struct IfExpr : public Expr
 {
    std::vector<IfTerm*> cases;
    Expr*           else_;
-
    IfExpr(std::vector<IfTerm*> cases, Expr* else_) : cases(cases), else_(else_) {}
+   virtual void accept(ExprIterator* iterator) { for (auto c : cases) iterator->visit(c); iterator->visit(else_); };
 };
 
 struct CaseTerm : public Expr
 {
    Any   match;
    Expr* eval;
-
    CaseTerm(Any match, Expr* eval) : match(match), eval(eval) {}
 };
 
@@ -405,31 +339,30 @@ struct Case : public Expr
    Expr* case_;
    std::vector<CaseTerm*> terms;
    Expr* else_;
-
    Case(Expr* case_, std::vector<CaseTerm*> terms, Expr* else_) : case_(case_), terms(terms), else_(else_) { }
 };
 
 struct Apply : public Expr
 {
    std::vector<Expr*>  elems;
-
    Apply(std::vector<Expr*> elems) : elems(elems) {}
+   virtual void accept(ExprIterator* iterator) { for (auto e : elems) iterator->visit(e); };
 };
 
 struct Lambda : public Expr
 {
    TypeInfo* type;
    Expr*     body;
-   
    Lambda(TypeInfo* type, Expr* body) : type(type), body(body) { }
+   virtual void accept(ExprIterator* iterator) { iterator->visit(body); };
 };
 
 struct Skipped : public Expr
 {
 };
-#endif
-void initParser2();
-void parse(Rule* p, std::string s);
+
+void setupParser2();
+Any parse(Rule* p, std::string s);
 
 extern Rule* expr;
 extern Rule* whiteSpace;

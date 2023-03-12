@@ -8,6 +8,32 @@
 
 using namespace std;
 
+TypeInfo* tiRule       ;
+TypeInfo* tiNonTerminal;
+TypeInfo* tiTerminal   ;
+TypeInfo* tiElems      ;
+TypeInfo* tiInner      ;
+TypeInfo* tiAlt        ;
+TypeInfo* tiSeq        ;
+TypeInfo* tiApplyP     ;
+TypeInfo* tiApplyP2    ;
+TypeInfo* tiIndentGroup;
+TypeInfo* tiIndentItem ;
+TypeInfo* tiStringP    ;
+TypeInfo* tiCharP      ;
+TypeInfo* tiRange      ;
+TypeInfo* tiEpsilon    ;
+TypeInfo* tiCheckIndent;
+
+TypeInfo* tiExpr       ;
+TypeInfo* tiEpsilonE   ; 
+TypeInfo* tiSkipE      ;
+TypeInfo* tiWhiteSpaceE;
+TypeInfo* tiLiteral    ;
+TypeInfo* tiIdentifier ;
+TypeInfo* tiApply      ;
+TypeInfo* tiLambda     ;
+
 Any id(Any x)
 {
    return x;
@@ -84,12 +110,12 @@ Any compose(Any f, Any g)
 
 Any callWithVecArgs(Any f, Vec args)
 {
-   return f.call(&*args.begin(), args.size());
+   return f.call(&args[0], args.size());
 }
 
 Any adaptVecArgs(Any f)
 {
-   return makePartApply(callWithVecArgs, f);
+   return partApply(callWithVecArgs, f);
 }
 
 Any constCall(Any r, Any x)
@@ -99,7 +125,7 @@ Any constCall(Any r, Any x)
 
 Any constFunc(Any r)
 {
-   return makePartApply(constCall, r);
+   return partApply(constCall, r);
 }
 
 ParseResult* Rule::parse(State beginS)
@@ -369,14 +395,37 @@ Rule* sepBy1(Rule* term, Rule* sep)
    return applyP(sepByR, seq(term, many(seq(sep, term))));
 }
 
-Rule* chainr(Rule* term, Rule* op)
+Expr* chainrR(Vec in)
 {
-   Alt* a = new Alt();
-   *a = *alt(seq(term, op, a), term);
-   return a;
+   Vec ops = in[1];
+   if (ops.size() > 0)
+   {
+      Expr* x;
+      Expr* y = nullptr;
+      for (int64_t i = ops.size() - 1; i >= 0; --i)
+      {
+         if (i > 0)
+         {
+            Vec opsh = ops[i-1];
+            x = opsh[1];
+         }
+         else
+            x = in[0];
+         Vec opsi = ops[i];
+         if (i == ops.size() - 1) y = opsi[1];
+         y = new Apply({opsi[0], x, y});
+      }
+      return y;
+   }
+   return in[0];
 }
 
-Any chainlR(Vec r)
+Rule* chainr(Rule* term, Rule* op)
+{
+   return applyP(chainrR, seq(term, many(seq(op, term))))->setName("chainr");
+}
+
+Expr* chainlR(Vec r)
 {
    Expr* term = r[0];
    Vec ops = r[1];
@@ -421,7 +470,12 @@ Rule* whiteSpace = many(alt(new Char(' '),
 
 Any lexemeR(Vec in)
 {
-   return new WhiteSpaceE(in[0], in[2], in[3]);
+   Span pre = in[0];
+   Span post = in[3];
+   if (pre.size() || post.size())
+      return new WhiteSpaceE(in[0], in[2], in[3]);
+   else
+      return in[2];
 }
 
 Rule* lexeme(Rule* lex)
@@ -474,7 +528,7 @@ double doubleR(vector<Any> xs)
    return d;
 }
 
-Any numberR(Vec in)
+Literal* numberR(Vec in)
 {
    string mantissaS = stringOfVec(in[0]);
    if (in[1].typeInfo == tiVec || in[2].typeInfo == tiVec)
@@ -506,15 +560,28 @@ Identifier* identR(Span s)
    return new Identifier(s);
 }
 
+Expr* applicationR(Vec in)
+{
+   if (in.size() == 1)
+      return in[0];
+   vector<Expr*> args;
+   for (auto e : in)
+      args.push_back(e);
+   return new Apply(args);
+}
+
 Lambda* lambdaR(Vec in)
 {
-   TypeInfo* type = new TypeInfo();
-   for (string p : Vec(in[1]))
-      type->add(new Member(getSymbol(p), tiAny));
+   TypeInfo* type = typeInfoInterp("lambdaParams");
+   for (Any p : Vec(in[1]))
+      if (p.typeInfo == tiWhiteSpaceE)
+         type->add(new Member(getSymbol(p.as<WhiteSpaceE*>()->inner.as<Identifier*>()->span.str()), tiAny));
+      else
+         type->add(new Member(getSymbol(p.as<Identifier*>()->span.str()), tiAny));
    return new Lambda(type, in[3]);
 }
 
-void parse(Rule* p, string s)
+Any parse(Rule* p, string s)
 {
    Module* m = new Module;
    m->text = s;
@@ -522,99 +589,180 @@ void parse(Rule* p, string s)
    State st(m);
    cout << "parsing '" << s << "'" << endl;
    ParseResult* r = p->parse(st);
+#if 0
    if (r)
       cout << r->ast << " col=" << r->endS.pos << endl;
    else
       cout << "parse failed" << endl;
+#endif
+   return r;
 }   
 
-Rule* expr = chainl(chainl(new ForwardTo("term"), new String("*")), new String("+"))->setName("expr");
+ApplyP* op(string s)
+{
+   return new ApplyP(identR, asSpan(new String(s)));
+}
 
-Rule* digit      = new Range('0', '9');
-Rule* upper      = new Range('A', 'Z');
-Rule* lower      = new Range('a', 'z');
-Rule* integer    = lexeme(applyP(integerR, many1(digit)))->setName("integer");
-Rule* number     = lexeme(applyP(numberR, seq(many1(digit), 
-                                              optional(seq(new Char('.'), many(digit))), 
-                                              optional(seq(new Char('e'), alt(new Char('+'), new Char('-'), epsilon), many(digit))))))->setName("number");
+Expr* bracketR(Vec in)
+{
+   return in[1];
+}
 
-Rule* identifier = lexeme(applyP(identR, asSpan(seq(alt(upper, lower, new Char('_')), 
-                                                    many(alt(upper, lower, digit, new Char('_')))))))->setName("identifier");
+Apply* vecR(Vec in)
+{
+   Apply* out = new Apply({new Literal(VarFunc(makeVec, 0, LLONG_MAX)), in[1]});
+   Vec ops = in[2];
+   if (ops.size() > 0)
+      for (Vec& op : ops)
+         out->elems.push_back(op[1]);
+   return out;
+}
 
-Rule* lambda     = applyP(lambdaR, seq(symbol("\\"), 
-                                       many1(identifier), 
-                                       symbol("->"), 
-                                       expr))
-                                          ->setName("lambda");
+Apply* leftOpR(Vec in)
+{
+   return new Apply({new Literal(VarFunc(bind, 0, LLONG_MAX)), in[1], in[0], new Literal(PH(0))});
+}
 
-Rule* ifCase     = seq(expr,
-                       symbol("then"),
-                       expr)
+Apply* rightOpR(Vec in)
+{
+   return new Apply({new Literal(VarFunc(bind, 0, LLONG_MAX)), in[0], new Literal(PH(0)), in[1]});
+}
+
+Rule* digit       = new Range('0', '9');
+Rule* upper       = new Range('A', 'Z');
+Rule* lower       = new Range('a', 'z');
+Rule* integer     = lexeme(applyP(integerR, many1(digit)))->setName("integer");
+Rule* number      = lexeme(applyP(numberR, seq(many1(digit), 
+                                               optional(seq(new Char('.'), many(digit))), 
+                                               optional(seq(new Char('e'), alt(new Char('+'), new Char('-'), epsilon), many(digit))))))->setName("number");
+
+Rule* identifier  = lexeme(applyP(identR, asSpan(seq(alt(upper, lower, new Char('_')), 
+                                                     many(alt(upper, lower, digit, new Char('_')))))))->setName("identifier");
+
+Rule* anyOp       = new Alt({op("."), op("*"), op("/"), op("+"), op("-"), op("$"), op("=")});
+
+Rule* leftOp      = applyP(leftOpR, seq(new ForwardTo("term"), anyOp))->setName("leftOp");
+
+Rule* rightOp     = applyP(rightOpR, seq(anyOp, new ForwardTo("term")))->setName("rightOp");
+
+Rule* bracketed   = applyP(bracketR, seq(symbol("("), alt(rightOp, anyOp, leftOp, new ForwardTo("statm")), symbol(")")));
+
+Rule* vecP        = applyP(vecR, seq(symbol("["), new ForwardTo("statm"), many(seq(symbol(","), new ForwardTo("statm"))), symbol("]")));
+
+Rule* term        = alt(number, identifier, bracketed, vecP)->setName("term");
+
+Rule* application = applyP(applicationR, many1(term))->setName("application");
+
+Rule* expr9       = chainr(application, op("."))->setName("expr9");
+
+Rule* expr7       = chainl(expr9, alt(op("*"), op("/")))->setName("expr7");
+
+Rule* expr6       = chainl(expr7, alt(op("+"), op("-")))->setName("expr6");
+
+Rule* expr0       = chainr(expr6, op("$"))->setName("expr0");
+
+Rule* expr        = chainr(expr0, op("="))->setName("expr");
+
+Rule* lambda      = applyP(lambdaR, seq(symbol("\\"), 
+                                        many1(identifier), 
+                                        symbol("->"), 
+                                        expr))
+                                           ->setName("lambda");
+
+Rule* ifCase      = seq(expr,
+                        symbol("then"),
+                        expr)
                    ->setName("ifCase");
 
-Rule* ifStat     = seq(symbol("if"), 
-                       new IndentGroup(many1(new IndentItem(ifCase))))->setName("ifStat");
+Rule* ifStat      = seq(symbol("if"), 
+                        new IndentGroup(many1(new IndentItem(ifCase))))->setName("ifStat");
 
-Rule* term       = alt(number, 
-                       identifier, 
-                       ifStat, 
-                       lambda)
-                   ->setName("term");
+Rule* statm       = alt(ifStat, lambda, expr);
 
-Rule* terms      = many1(term)->setName("terms");
+Rule* block       = (new IndentGroup(many1(new IndentItem(statm))))->setName("block");
 
-void initParser2()
+string toTextLiteral(Literal* literal, int64_t width)
+{
+   return toTextAux(literal->value, width);
+}
+
+string toTextIdentifier(Identifier* ident, int64_t width)
+{
+   return toTextAux(ident->span.str(), width);
+}
+
+string toTextWhiteSpaceE(WhiteSpaceE* whiteSpaceE, int64_t width)
+{
+   return toTextAux(whiteSpaceE->inner, width);
+}
+
+void setupParser2()
 {
    NameMap nameMap;
    nameMap["blockComment"] = blockComment;
-   nameMap["term"] = term;
+   nameMap["statm"] = statm;
+   nameMap["term" ] = term;
    ReplaceNamesIterator rni(nameMap);
-   rni.visit(expr);
-   TypeInfo* tiRule        = getTypeAdd<Rule       >();
-   TypeInfo* tiTerminal    = getTypeAdd<Terminal   >();
-   TypeInfo* tiNonTerminal = getTypeAdd<NonTerminal>();
-   TypeInfo* tiElems       = getTypeAdd<Elems      >();
-   TypeInfo* tiInner       = getTypeAdd<Inner      >();
-   TypeInfo* tiAlt         = getTypeAdd<Alt        >();
-   TypeInfo* tiSeq         = getTypeAdd<Seq        >();
-   TypeInfo* tiEpsilon     = getTypeAdd<Epsilon    >();
-   TypeInfo* tiChar        = getTypeAdd<Char       >();
-   TypeInfo* tiRange       = getTypeAdd<Range      >();
-   TypeInfo* tiString      = getTypeAdd<String     >();
-   TypeInfo* tiApplyP      = getTypeAdd<ApplyP     >();
-   TypeInfo* tiApplyP2     = getTypeAdd<ApplyP2    >();
-   TypeInfo* tiIndentGroup = getTypeAdd<IndentGroup>();
-   TypeInfo* tiIndentItem  = getTypeAdd<IndentItem >();
-   TypeInfo* tiCheckIndent = getTypeAdd<CheckIndent>();
-   addTypeLink(tiRule       , tiTerminal   );
+   rni.visit(block);
+   tiRule        = getTypeAdd<Rule       >();
+   tiNonTerminal = getTypeAdd<NonTerminal>();
+   tiTerminal    = getTypeAdd<Terminal   >();
+   tiElems       = getTypeAdd<Elems      >();
+   tiInner       = getTypeAdd<Inner      >();
+   tiAlt         = getTypeAdd<Alt        >();
+   tiSeq         = getTypeAdd<Seq        >();
+   tiApplyP      = getTypeAdd<ApplyP     >();
+   tiApplyP2     = getTypeAdd<ApplyP2    >();
+   tiIndentGroup = getTypeAdd<IndentGroup>();
+   tiIndentItem  = getTypeAdd<IndentItem >();
+   tiStringP     = getTypeAdd<String     >();
+   tiCharP       = getTypeAdd<Char       >();
+   tiRange       = getTypeAdd<Range      >();
+   tiEpsilon     = getTypeAdd<Epsilon    >();
+   tiCheckIndent = getTypeAdd<CheckIndent>();
    addTypeLink(tiRule       , tiNonTerminal);
+   addTypeLink(tiRule       , tiTerminal   );
    addTypeLink(tiNonTerminal, tiElems      );
    addTypeLink(tiNonTerminal, tiInner      );
-   addTypeLink(tiTerminal   , tiRange      );
    addTypeLink(tiElems      , tiAlt        );
    addTypeLink(tiElems      , tiSeq        );
-   addTypeLink(tiTerminal   , tiEpsilon    );
-   addTypeLink(tiTerminal   , tiChar       );
-   addTypeLink(tiTerminal   , tiString     );
    addTypeLink(tiInner      , tiApplyP     );
+   addTypeLink(tiInner      , tiApplyP2    );
    addTypeLink(tiInner      , tiIndentGroup);
    addTypeLink(tiInner      , tiIndentItem );
+   addTypeLink(tiTerminal   , tiStringP    );
+   addTypeLink(tiTerminal   , tiCharP      );
+   addTypeLink(tiTerminal   , tiRange      );
+   addTypeLink(tiTerminal   , tiEpsilon    );
    addTypeLink(tiTerminal   , tiCheckIndent);
    addMember(&Rule  ::name, "name");
    addMember(&Inner ::inner, "inner");
-   addMember(&Elems ::elems, "elems");
+   //addMember(&Elems ::elems, "elems");
    addMember(&Char  ::c   , "c"   );
    addMember(&Range ::min , "min" );
    addMember(&Range ::max , "max" );
    addMember(&String::text, "text");
 
+   tiExpr        = getTypeAdd<Expr       >();
+   tiEpsilonE    = getTypeAdd<EpsilonE   >();
+   tiSkipE       = getTypeAdd<SkipE      >();
+   tiWhiteSpaceE = getTypeAdd<WhiteSpaceE>();
+   tiLiteral     = getTypeAdd<Literal    >();
+   tiIdentifier  = getTypeAdd<Identifier >();
+   tiApply       = getTypeAdd<Apply      >();
+   tiLambda      = getTypeAdd<Lambda     >();
+   getTypeAdd<Apply*>();
+   addTypeLink(tiExpr, tiEpsilonE);
+   addTypeLink(tiExpr, tiSkipE);
+   addTypeLink(tiExpr, tiWhiteSpaceE);
+   addTypeLink(tiExpr, tiLiteral);
+   addTypeLink(tiExpr, tiIdentifier);
+   addTypeLink(tiExpr, tiApply);
+   addTypeLink(tiExpr, tiLambda);
+   toTextAux.add(toTextLiteral);
+   toTextAux.add(toTextIdentifier);
+   toTextAux.add(toTextWhiteSpaceE);
    addMember(&Apply::elems, "elems");
-   /*
-   Rule* p = chainl(chainl(integer, new String("*")), new String("+"));
-   parse(p, "123+456*789");
-   parse(p, "123*456+789");
-   parse(seq(new String("hello")), "hello");
-   */
 }
 
 void Module::getLines()

@@ -329,13 +329,6 @@ void TimerFrameD::exit()
    --debugLevel;
    ODSL(TS+"<-" + funcInfo->name);
 }
-void TimerFrameD::exit(string result)
-{
-   if (ended) return;
-   TimerFrame::exit();
-   --debugLevel;
-   ODSL(TS+"<-" + funcInfo->name + "=" + result);
-}
 //------------------------------------------------------------------------------
 string formatTime(double t)
 {

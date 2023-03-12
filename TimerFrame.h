@@ -183,9 +183,19 @@ struct TimerFrameD : public TimerFrame
             TimerFrameD (const char* funcName, std::string args);
             ~TimerFrameD();
    void     exit        ();
-   void     exit        (std::string result);
+   template <typename T>
+   T        exit        (T result);
 };
 
+template <typename T>
+T TimerFrameD::exit(T result)
+{
+   if (ended) return result;
+   TimerFrame::exit();
+   --debugLevel;
+   ODSL(TS+"<-" + funcInfo->name + "=" + toText(result));
+   return result;
+}
 
 struct StrCmp
 {

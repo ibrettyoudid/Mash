@@ -14,7 +14,7 @@ enum LinkKind
 {
    lSub = 0,
    lVirtual,
-   lVirtualSub, //virtual inheritance but attempt to keep it in same place
+   lVirtualSub, //virtual inheritance but attempt to do it without pointers
    lConv,
    lDelegate //isn't this the same as conversion? yes i think it is
 };
@@ -22,6 +22,8 @@ enum LinkKind
 enum Kind
 {
    kNormal = 0,
+   kPrimitive,
+   kStruct,
    kFunction,
    kPointer,
    kReference,
@@ -36,6 +38,10 @@ enum NKind
    kUnsigned,
    kFloat
 };
+
+void error(std::string message);
+
+typedef std::vector<Any>        Vec;
 
 struct Member;
 
@@ -91,12 +97,13 @@ struct Any
 {
    typedef std::input_iterator_tag iterator_category;
    TypeInfo* typeInfo;
-   void* ptr;
+   void* payload;
 
    template <class Type> void construct(Type value);
    Any();
    template <class Type> Any(Type value);
    template <class Type> Any(Type& value, Dynamic);//detect type dynamically using C++ RTTI - takes a reference but creates a plain value
+   template <class Type> Any(Type* value);//detect type dynamically using C++ RTTI - takes a pointer and creates a pointer
    template <class Type> Any(Type& value, Ref);    //creates a reference
    Any(const Any& rhs);
    Any(Any &&rhs);
@@ -104,6 +111,7 @@ struct Any
    Any& operator= (Any&& rhs);
    Any(TypeInfo* typeInfo, void* rhs);
    ~Any();
+   bool empty();
    Any call(Any* args, int64_t n);
    Any operator()();
    Any operator()(Any arg0);
@@ -112,30 +120,40 @@ struct Any
    Any operator()(Any arg0, Any arg1, Any arg2, Any arg3);
    Any operator()(Any arg0, Any arg1, Any arg2, Any arg3, Any arg4);
    Any derp();
+   Any deany();
+   Any ptrTo();
+   Any refTo();
    //--------------------------------------------------------------------------- CONVERSION
    template <class To>   operator To&();
    template <class To>   To& as();
    template <class To>   To* any_cast();
    operator MMBase& ();
    //---------------------------------------------------------------------------------
-   std::string typeName  ();
-   TypeInfo*   paramType (int64_t n, bool useReturnT = false);
-   bool        isPtrTo   (TypeInfo* other);
-   bool        isRefTo   (TypeInfo* other);
-   bool        isPRTF    (TypeInfo* other);
-   int64_t         maxArgs   ();
-   int64_t         minArgs   ();
-   bool        callable  ();
-   void        showhex   ();
-   std::string hex       ();
-   int64_t         rDepth    ();
-   int64_t         pDepth    ();
-   int64_t         prDepth   ();
-   Any         add       (Member* m, Any value);
-   Any         member    (Member* m);
-   Any         member    (Symbol* symbol);
-   Any         member    (std::string name);
-   Any         member    (int64_t n);
+   std::string typeName    ();
+   TypeInfo*   paramType   (int64_t n, bool useReturnT = false);
+   bool        isPtrTo     (TypeInfo* other);
+   bool        isRefTo     (TypeInfo* other);
+   bool        isPRTF      (TypeInfo* other);
+   int64_t     maxArgs     ();
+   int64_t     minArgs     ();
+   bool        callable    ();
+   void        showhex     ();
+   std::string hex         ();
+   int64_t     rDepth      ();
+   int64_t     pDepth      ();
+   int64_t     prDepth     ();
+   void        add         (Member* m, Any value);
+   Any         getMember   (Member* m);
+   Any         getMemberRef(Member* m);
+   Any         getMemberPtr(Member* m);
+   void        setMember   (Member* m, Any value);
+   Any         getMemberRef(Symbol* symbol);
+   Any         getMemberRef(std::string name);
+   Any         getMemberRef(int64_t n);
+   Member*     findMember  (Symbol* symbol);
+   Member*     findMember  (std::string name);
+   Member*     findMember  (int64_t n);
+   void*       getMemberAddress(Member* m);
 };
 
 struct TypeLink
@@ -143,7 +161,7 @@ struct TypeLink
    TypeInfo* base;
    TypeInfo* derived;
    LinkKind  kind;
-   int64_t       offset;
+   int64_t   offset;
    void*     (*staticUp   )(void*);
    void*     (*staticDown )(void*);
    void*     (*dynamicUp  )(void*);
@@ -192,7 +210,7 @@ struct TypeInfo
    std::string      name;
    int64_t          size;
    Kind             kind;
-   TypeInfo*        of;
+   TypeInfo*        of = nullptr;
 
    MemberList       members;
    MemberList       allMembers;
@@ -201,25 +219,27 @@ struct TypeInfo
    TypeConn         conv;
    TypePathList     layout;
 
-   void     (*copyCon )(void* res, void* in, TypeInfo* ti);//set in getTypeBase
-   void     (*destroy )(void* target);
-   Any      (*delegPtr)(Any* fp , Any* params, int64_t np);
+   void             (*copyCon )(void* res, void* in, TypeInfo* ti) = nullptr;//set in getTypeBase
+   void             (*destruct )(void* target, TypeInfo* ti)       = nullptr;
+   Any              (*delegPtr)(Any* fp , Any* params, int64_t np) = nullptr;
 
-   NKind    nKind;//Signed/unsigned/floating
+   NKind            nKind;//Signed/unsigned/floating
 
    bool             cpp;
    const type_info* cType;
 
-   bool     number;
-   bool     member;//member function or member pointer (memptrs are callable)
-   bool     multimethod;
+   bool             number      = false;
+   bool             member      = false;//member function or member pointer (memptrs are callable)
+   bool             multimethod = false;
 
-   int64_t      count;
+   int64_t          count;
    std::string      fullName;
+   TypeInfo*        ptr = nullptr;
+   TypeInfo*        ref = nullptr;
 
    std::vector<std::vector<int64_t>> mmpindices;
 
-   TypeInfo(std::string name = "") : name(name), member(false), multimethod(false), of(nullptr), copyCon(nullptr), kind(kNormal)
+   TypeInfo(std::string name = "") : name(name), kind(kNormal)
    {
    }
 
@@ -271,8 +291,6 @@ struct TILess
    }
 };
 
-
-
 typedef std::map<const type_info*, TypeInfo*, TILess> TypeMap;
 extern TypeMap typeMap;
 extern TypeMap typeMapR;
@@ -297,7 +315,6 @@ struct TILess2
 typedef std::set<TypeInfo*, TILess2> TypeSet;
 extern TypeSet typeSet;
 extern TypeSet typeSetR;
-
 
 template <class T>
 struct CopyCon
@@ -348,22 +365,23 @@ struct CopyCon<T[n]>
 };
 
 template <class T>
-struct Destroy
+struct Destruct
 {
-   static void go(void* target)
+   static void go(void* target, TypeInfo*)
    {
       T* t = static_cast<T*>(target);
+      if (!t) throw "null pointer!";
       t->~T();
    }
 };
 
 template <class T>
-struct Destroy<T&>
+struct Destruct<T&>
 {
-   static void go(void* target)
+   static void go(void* target, TypeInfo*)
    {
-      T** t = static_cast<T**>(target);
-      (*t)->~T();
+      //T** t = static_cast<T**>(target);
+      //(*t)->~T();
    }
 };
 
@@ -388,65 +406,155 @@ getType is specialised for
 
 */
 
-template <class Type>
-TypeInfo getTypeBase()
-{
-   TypeInfo typeInfo;
-   typeInfo.cpp      = true;
-   typeInfo.cType    = &typeid(Type);
-   typeInfo.name     = typeid(Type).name();
-   typeInfo.fullName = typeid(Type).name();
-   typeInfo.size     = sizeof(Type);
-   typeInfo.delegPtr = nullptr;
-   typeInfo.copyCon  = CopyCon<Type>::go;
-   typeInfo.destroy  = Destroy<Type>::go;
-   return typeInfo;
-}
-
 static void copynothing(void* res, void* in, TypeInfo* ti)
 {
 }
 
-static void destroynothing(void*)
+static void destructnothing(void*, TypeInfo*)
 {
 }
+
+TypeInfo* typeInfoInterp(std::string name);
+
+template <class Type> TypeInfo* getTypeAdd();
 
 template <class Type>
 struct getType
 {
-   static TypeInfo info()
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<Type>());
-      return fti;
-   }
-};
-
-template < >
-struct getType<void>
-{
-   static TypeInfo info()
-   {
-      TypeInfo typeInfo;
-      typeInfo.cpp = true;
-      typeInfo.name = "void";
-      typeInfo.fullName = "void";
-      typeInfo.size = 0;
-      typeInfo.delegPtr = nullptr;
-      typeInfo.copyCon = copynothing;
-      typeInfo.destroy = destroynothing;
+      TypeInfo* typeInfo = new TypeInfo;
+      typeInfo->cpp      = true;
+      typeInfo->cType    = &typeid(Type);
+      typeInfo->name     = typeid(Type).name();
+      typeInfo->fullName = typeid(Type).name();
+      typeInfo->size     = sizeof(Type);
+      typeInfo->delegPtr = nullptr;
+      typeInfo->copyCon  = CopyCon<Type>::go;
+      typeInfo->destruct  = Destruct<Type>::go;
+      //getTypeAdd<Type*>();
+      //getTypeAdd<Type&>();
       return typeInfo;
    }
 };
+
+template <> struct getType<void>
+{
+   static TypeInfo* go()
+   {
+      TypeInfo* typeInfo = new TypeInfo;
+      typeInfo->cpp = true;
+      typeInfo->cType = &typeid(void);
+      typeInfo->name = "void";
+      typeInfo->fullName = "void";
+      typeInfo->size = 0;
+      typeInfo->delegPtr = nullptr;
+      typeInfo->copyCon = copynothing;
+      typeInfo->destruct = destructnothing;
+      return typeInfo;
+   }
+};
+
+template <class To>
+struct getType<To&>
+{
+   typedef To& Type;
+   static TypeInfo* go()
+   {
+      TypeInfo* typeInfo = new TypeInfo;
+      typeInfo->cpp      = true;
+      typeInfo->cType    = &typeid(Type);
+      typeInfo->name     = typeid(Type).name();
+      typeInfo->fullName = typeid(Type).name();
+      typeInfo->size     = sizeof(To*);
+      typeInfo->delegPtr = nullptr;
+      typeInfo->copyCon  = CopyCon<Type>::go;
+      typeInfo->destruct = Destruct<Type>::go;
+      typeInfo->kind     = kReference;
+      typeInfo->of       = getTypeAdd<To>();
+      typeInfo->of->ref  = typeInfo;
+      return typeInfo;
+   }
+};
+
+template <class To>
+struct getType<To*>//Closure* and Multimethod* specialise this further
+{
+   typedef To* Type;
+   static TypeInfo* go()
+   {
+      TypeInfo* typeInfo = new TypeInfo;
+      typeInfo->cpp      = true;
+      typeInfo->cType    = &typeid(Type);
+      typeInfo->name     = typeid(Type).name();
+      typeInfo->fullName = typeid(Type).name();
+      typeInfo->size     = sizeof(Type);
+      typeInfo->delegPtr = nullptr;
+      typeInfo->copyCon  = CopyCon<Type>::go;
+      typeInfo->destruct = Destruct<Type>::go;
+      typeInfo->kind     = kPointer;
+      typeInfo->of       = getTypeAdd<To>();
+      typeInfo->of->ptr  = typeInfo;
+      return typeInfo;
+   }
+};
+/*
+template <class R>
+struct getType<R[]>
+{
+typedef R T[];
+static TypeInfo info()
+{
+TypeInfo fti(getTypeBase<T>());//illegal sizeof operand, makes a kind of sense i suppose being 0 bytes
+fti.kind = kArray;
+fti.of = getTypeAdd<R>();
+return fti;
+}
+};
+*/
+template <class R, int64_t n>
+struct getType<R[n]>
+{
+   typedef R Type[n];
+   static TypeInfo go()
+   {
+      TypeInfo* typeInfo = new TypeInfo;
+      typeInfo->cpp      = true;
+      typeInfo->cType    = &typeid(Type);
+      typeInfo->name     = typeid(Type).name();
+      typeInfo->fullName = typeid(Type).name();
+      typeInfo->size     = sizeof(Type);
+      typeInfo->delegPtr = nullptr;
+      typeInfo->copyCon  = CopyCon<Type>::go;
+      typeInfo->destruct  = Destruct<Type>::go;
+      typeInfo->kind     = kArray;
+      typeInfo->count    = n;
+      typeInfo->of       = getTypeAdd<R>();
+      return typeInfo;
+   }
+};
+
+#define TYPESET
 
 template <class Type>
 struct getTypeAddStr
 {
    static TypeInfo* go()
    {
+#ifdef TYPESET
+      auto i = typeSet.find(&typeid(Type));
+      if (i == typeSet.end())
+      {  
+         TypeInfo* ti = getType<Type>::go();
+         typeSet.insert(ti);
+         return ti;
+      }
+      return *i;
+#else
       TypeInfo*&          ti = typeMap[&typeid(Type)];
-      if (ti == nullptr)  ti = toObject(getType<Type>::info());
+      if (ti == nullptr)  ti = getType<Type>::go();
       return ti;
-      //return new TypeInfo(getType<X>::info());
+#endif
    }
 };
 
@@ -455,84 +563,30 @@ struct getTypeAddStr<Type&>
 {
    static TypeInfo* go()
    {
-      /*
+#ifdef TYPESET
       auto i = typeSetR.find(&typeid(Type));
       if (i == typeSetR.end())
       {  
-         TypeInfo* ti = toObject(getType<Type>::info());
+         TypeInfo* ti = getType<Type&>::go();
          typeSetR.insert(ti);
          return ti;
       }
       return *i;
-      */
+#else
       TypeInfo*&          ti = typeMapR[&typeid(Type)];
-      if (ti == nullptr)  ti = toObject(getType<Type&>::info());
+      if (ti == nullptr)  ti = getType<Type&>::go();
       return ti;
-      //return new TypeInfo(getType<X>::info());
+#endif
    }
 };
 
+//we don't want to have to pass around a Type so we want a function that doesn't take it as an argument,
+//so we have to pass on the call to a struct template because we can't use function overloading to specialise without an argument
 template <class Type>
 TypeInfo* getTypeAdd()
 {
    return getTypeAddStr<Type>::go();
 }
-
-template <class To>
-struct getType<To&>
-{
-   typedef To& T;
-   static TypeInfo info()
-   {
-      TypeInfo fti(getTypeBase<T>());
-      fti.size      = sizeof(To*);
-      fti.name     += "&";
-      fti.fullName += "&";
-      fti.kind  = kReference;
-      fti.of = getTypeAdd<To>();
-      return fti;
-   }
-};
-
-template <class R>
-struct getType<R*>//Closure* and Multimethod* specialise this further
-{
-   typedef R* T;
-   static TypeInfo info()
-   {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind = kPointer;
-      fti.of = getTypeAdd<R>();
-      return fti;
-   }
-};
-/*
-template <class R>
-struct getType<R[]>
-{
-   typedef R T[];
-   static TypeInfo info()
-   {
-      TypeInfo fti(getTypeBase<T>());//illegal sizeof operand, makes a kind of sense i suppose being 0 bytes
-      fti.kind = kArray;
-      fti.of = getTypeAdd<R>();
-      return fti;
-   }
-};
-*/
-template <class R, int64_t n>
-struct getType<R[n]>
-{
-   typedef R T[n];
-   static TypeInfo info()
-   {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind  = kArray;
-      fti.count = n;
-      fti.of = getTypeAdd<R>();
-      return fti;
-   }
-};
 
 template <class To, class From>
 To double_cast(From F)
@@ -629,6 +683,7 @@ struct Member
 #else
    Any       (*getMember   )(Member* mem, Any& ca);
    Any       (*getMemberRef)(Member* mem, Any& ca);
+   Any       (*getMemberPtr)(Member* mem, Any& ca);
    void      (*setMember   )(Member* mem, Any& ca, Any& ra);
 #endif
    Member(Symbol* symbol, TypeInfo * typeInfo = nullptr, int64_t offset = 0, Any ptrToMember = 0) : symbol(symbol), typeInfo(typeInfo), offset(offset), ptrToMember(ptrToMember), one(false) {}
@@ -648,14 +703,14 @@ template <class Type>
 void Any::construct(Type value)
 {
    typeInfo = getTypeAdd<Type>();
-   ptr = new char[typeInfo->size];
-   typeInfo->copyCon(ptr, &value, typeInfo);
+   payload = new char[typeInfo->size];
+   typeInfo->copyCon(payload, &value, typeInfo);
 }
 template <class Type> Any::Any(Type value)
 {
    typeInfo = getTypeAdd<Type>();
-   ptr = new char[typeInfo->size];
-   typeInfo->copyCon(ptr, &value, typeInfo);
+   payload = new char[typeInfo->size];
+   typeInfo->copyCon(payload, &value, typeInfo);
 }
 /*
 template <class Type> Any(Type* value)
@@ -666,21 +721,56 @@ template <class Type> Any(Type* value)
 */
 template <class Type> Any::Any(Type& value, Dynamic)//detect type dynamically using C++ RTTI - takes a reference but creates a plain value
 {
-   //typeInfo = *typeSet.find(&typeid(value));
+#ifdef TYPESET
+   typeInfo = *typeSet.find(&typeid(value));
+#else
    typeInfo = typeMap[&typeid(value)];
-   ptr = new char[typeInfo->size];
-   typeInfo->copyCon(ptr, &value, typeInfo);
+#endif
+   payload = new char[typeInfo->size];
+   typeInfo->copyCon(payload, &value, typeInfo);
+}
+template <class Type> Any::Any(Type* value)//detect type dynamically using C++ RTTI - takes a pointer and creates a pointer
+{
+#ifdef TYPESET
+   auto i = typeSet.find(&typeid(*value));
+   if (i != typeSet.end())
+      typeInfo = *i;
+   else
+      typeInfo = nullptr;
+#else
+   if (typeMap.contains(&typeid(*value)))
+      typeInfo = typeMap[&typeid(*value)];
+   else
+      typeInfo = nullptr;
+#endif
+   if (typeInfo)
+      typeInfo = typeInfo->ptr;
+   if (!typeInfo)
+   {
+      typeInfo = getTypeAdd<Type*>();
+      /*
+      if (typeMap[&typeid(*value)] != typeInfo->of)
+      {
+         std::ostringstream o;
+         o << typeid(*value).name() << " should be " << typeInfo->of->cType->name();
+         //error(o.str());
+      }
+      */
+   }
+
+   payload = new char[typeInfo->size];
+   typeInfo->copyCon(payload, &value, typeInfo);
 }
 template <class Type> Any::Any(Type& value, Ref)//creates a reference
 {
    typeInfo = getTypeAdd<Type&>();
-   ptr = new char[typeInfo->size];
+   payload = new char[typeInfo->size];
    Type* temp = &value;
-   typeInfo->copyCon(ptr, &temp, typeInfo);
+   typeInfo->copyCon(payload, &temp, typeInfo);
 }
 #if 1
 template <class To>
-Any::operator To&()
+To& Any::as()
 {
    TypeInfo* toType = getTypeAdd<To>();
    TypeInfo* toType1 = toType;
@@ -722,24 +812,24 @@ Any::operator To&()
    //maybe put something in to disallow slicing
    if (!hasLink(toType, fromType))//only allow conversions from derived to base
    {
-      std::cout << "types unrelated: attempt to cast from " << typeInfo->getName() << " to " << toType1->getName() << std::endl;
       std::ostringstream o;
       o << "types unrelated: attempt to cast from " << typeInfo->getName() << " to " << toType1->getName();
+      std::cout << o.str() << std::endl;
       throw std::runtime_error(o.str());
    }
    int64_t indirs = fromRL + fromPL - toPL;
    if (indirs < -1)
    {
-      std::cout << "cannot add more than 1 indirection: attempt to cast from " << typeInfo->getName() << " to " << toType1->getName() << std::endl;
       std::ostringstream o;
       o << "cannot add more than 1 indirection: attempt to cast from " << typeInfo->getName() << " to " << toType1->getName();
+      std::cout << o.str() << std::endl;
       throw std::runtime_error(o.str());
    }
    if (indirs > 3)
    {
-      std::cout << "cannot remove more than 3 indirections: attempt to cast from " << typeInfo->getName() << " to " << toType1->getName() << std::endl;
       std::ostringstream o;
       o << "cannot remove more than 3 indirections: attempt to cast from " << typeInfo->getName() << " to " << toType1->getName();
+      std::cout << o.str() << std::endl;
       throw std::runtime_error(o.str());
    }
    //below, the number of asterisks in the < > must equal the number of dereferences between return and cast (in order for the types to be correct)
@@ -748,20 +838,22 @@ Any::operator To&()
       //case -2:
       //   return double_cast<To>(&ptr);
       case -1:
-         return *double_cast<To*>(&ptr);
+         return *double_cast<To*>(&payload);
 
        //in cases below, type in < > is the from type, both To and From may be pointer/pointer-to-pointer/etc. types
       case 0:
-         return *static_cast<To*>(ptr);
+         return *static_cast<To*>(payload);
       case 1:
-         return **static_cast<To**>(ptr);
+         return **static_cast<To**>(payload);
       case 2:
-         return ***static_cast<To***>(ptr);
+         return ***static_cast<To***>(payload);
       case 3:
-         return ****static_cast<To****>(ptr);
+         return ****static_cast<To****>(payload);
    }
    throw "HUH?";
 }
+
+bool canCast(TypeInfo* toType, TypeInfo* fromType);
 #else
 template <class To>
 Any::operator To ()
@@ -855,23 +947,16 @@ operator To1*()
 }
 */
 template <class To>
-To& Any::as()
+Any::operator To&()
 {
-   TypeInfo* typeInfoTo = getTypeAdd<To>();
-   if (typeInfoTo == tiAny) return *reinterpret_cast<To*>(this);
-   if (typeInfo->isRTF(typeInfoTo)) return *static_cast<To*>(ptr);
-   if (typeInfo->isPtrTo(typeInfoTo)) return **static_cast<To**>(ptr);
-   if (typeInfoTo->isPtrTo(typeInfo)) return *reinterpret_cast<To*>(&ptr);
-   //if (typeInfoTo->kind == kPointer && typeInfoTo->of == typeInfo) return double_cast<To>(ptr);
-   std::cout << TS + "type mismatch: casting " + typeInfo->name + " to " + typeInfoTo->name << std::endl;
-   throw "type mismatch";
+   return as<To>();
 }
 template <class To>
 To* Any::any_cast()
 {
    TypeInfo* typeInfoTo = getTypeAdd<To>();
    //if (typeInfoTo == tiAny) return reinterpret_cast<To*>(this);
-   if (typeInfo->isRTF(typeInfoTo)) return static_cast<To*>(ptr);
+   if (typeInfo->isRTF(typeInfoTo)) return static_cast<To*>(payload);
    //if (typeInfo->isPtrTo(typeInfoTo)) return *static_cast<To**>(ptr);
    //if (typeInfoTo->isPtrTo(typeInfo)) return reinterpret_cast<To*>(&ptr);
    return nullptr;
@@ -924,6 +1009,14 @@ Any getMemberRef(Member* mem, Any &ca)
 }
 
 template <class C, class R>
+Any getMemberPtr(Member* mem, Any &ca)
+{
+   R C::* ptr = mem->ptrToMember.as<R C::*>();
+   C*     c   = ca.as<C*>();
+   return Any(&(c->*ptr));
+}
+
+template <class C, class R>
 void setMember(Member* mem, Any& ca, Any& ra)
 {
    R C::* ptr = mem->ptrToMember.as<R C::*>();
@@ -944,6 +1037,7 @@ void addMember(R C::*ptr, std::string name)
    cti->members.add(pm);
    pm->getMember    = getMember<C, R>;
    pm->getMemberRef = getMemberRef<C, R>;
+   pm->getMemberPtr = getMemberPtr<C, R>;
    pm->setMember    = setMember<C, R>;
 }
 
@@ -965,16 +1059,23 @@ Any delegPtrMem(Any* fp1, Any* params, int64_t n)
 template <class R, class C>
 struct getType<R C::*>
 {
-   typedef R* T;
-   static TypeInfo info()
+   typedef R C::* Type;
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kPtrMem;
-      fti.member = true;
-      fti.of  = getTypeAdd<R>();
-      fti.members.add(new Member(getSymbol("class"), getTypeAdd<C>()));
-      fti.delegPtr = delegPtrMem<R, C>;
-      return fti;
+      TypeInfo* typeInfo = new TypeInfo;
+      typeInfo->cpp      = true;
+      typeInfo->cType    = &typeid(Type);
+      typeInfo->name     = typeid(Type).name();
+      typeInfo->fullName = typeid(Type).name();
+      typeInfo->size     = sizeof(Type);
+      typeInfo->delegPtr = delegPtrMem<R, C>;
+      typeInfo->copyCon  = CopyCon<Type>::go;
+      typeInfo->destruct  = Destruct<Type>::go;
+      typeInfo->kind     = kPtrMem;
+      typeInfo->member   = true;
+      typeInfo->of       = getTypeAdd<R>();
+      typeInfo->members.add(new Member(getSymbol("class"), getTypeAdd<C>()));
+      return typeInfo;
    }
 };
 
@@ -987,12 +1088,19 @@ Any delegVoid0(Any* fp1, Any* params, int64_t n);
 template <>
 struct getType<void (*)()>
 {
-   typedef void (*T)();
-   static TypeInfo info()
+   typedef void (*Type)();
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind = kFunction;
-      fti.delegPtr = delegVoid0;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoid0;
       return fti;
    }
 };
@@ -1000,6 +1108,7 @@ struct getType<void (*)()>
 template <class A0>
 Any delegVoid1(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 1) throw "wrong number of params";
    void (*fp)(A0) = *fp1;
    fp(params[0]);
    return Any(0);
@@ -1007,13 +1116,20 @@ Any delegVoid1(Any* fp1, Any* params, int64_t n)
 template <class A0>
 struct getType<void (*)(A0)>
 {
-   typedef void (*T)(A0);
-   static TypeInfo info()
+   typedef void (*Type)(A0);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind = kFunction;
-      fti.delegPtr = delegVoid1<A0>;
-      fti.members.add(new Member(getTypeAdd<A0>()));
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoid1<A0>;
+      fti->members.add(new Member(getTypeAdd<A0>()));
       return fti;
    }
 };
@@ -1021,6 +1137,7 @@ struct getType<void (*)(A0)>
 template <class A0, class A1>
 Any delegVoid2(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 2) throw "wrong number of params";
    void (*fp)(A0, A1) = *fp1;
    fp(params[0], params[1]);
    return Any(0);
@@ -1028,14 +1145,21 @@ Any delegVoid2(Any* fp1, Any* params, int64_t n)
 template <class A0, class A1>
 struct getType<void (*)(A0,A1)>
 {
-   typedef void (*T)(A0, A1);
-   static TypeInfo info()
+   typedef void (*Type)(A0, A1);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind = kFunction;
-      fti.delegPtr = delegVoid2<A0, A1>;
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoid2<A0, A1>;
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
       return fti;
    }
 };
@@ -1043,6 +1167,7 @@ struct getType<void (*)(A0,A1)>
 template <class A0, class A1, class A2>
 Any delegVoid3(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 3) throw "wrong number of params";
    void (*fp)(A0, A1, A2) = *fp1;
    fp(params[0], params[1], params[2]);
    return Any(0);
@@ -1050,15 +1175,22 @@ Any delegVoid3(Any* fp1, Any* params, int64_t n)
 template <class A0, class A1, class A2>
 struct getType<void (*)(A0,A1,A2)>
 {
-   typedef void (*T)(A0, A1, A2);
-   static TypeInfo info()
+   typedef void (*Type)(A0, A1, A2);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind = kFunction;
-      fti.delegPtr = delegVoid3<A0, A1, A2>;
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoid3<A0, A1, A2>;
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
       return fti;
    }
 };
@@ -1066,6 +1198,7 @@ struct getType<void (*)(A0,A1,A2)>
 template <class A0, class A1, class A2, class A3>
 Any delegVoid4(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 4) throw "wrong number of params";
    void (*fp)(A0, A1, A2, A3) = *fp1;
    fp(params[0], params[1], params[2], params[3]);
    return Any(0);
@@ -1073,16 +1206,23 @@ Any delegVoid4(Any* fp1, Any* params, int64_t n)
 template <class A0, class A1, class A2, class A3>
 struct getType<void (*)(A0,A1,A2,A3)>
 {
-   typedef void (*T)(A0, A1, A2, A3);
-   static TypeInfo info()
+   typedef void (*Type)(A0, A1, A2, A3);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind = kFunction;
-      fti.delegPtr = delegVoid4<A0, A1, A2, A3>;
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
-      fti.members.add(new Member(getTypeAdd<A3>()));
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoid4<A0, A1, A2, A3>;
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
+      fti->members.add(new Member(getTypeAdd<A3>()));
       return fti;
    }
 };
@@ -1090,6 +1230,7 @@ struct getType<void (*)(A0,A1,A2,A3)>
 template <class A0, class A1, class A2, class A3, class A4>
 Any delegVoid5(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 5) throw "wrong number of params";
    void (*fp)(A0, A1, A2, A3, A4) = *fp1;
    fp(params[0], params[1], params[2], params[3], params[4]);
    return Any(0);
@@ -1097,17 +1238,24 @@ Any delegVoid5(Any* fp1, Any* params, int64_t n)
 template <class A0, class A1, class A2, class A3, class A4>
 struct getType<void (*)(A0,A1,A2,A3,A4)>
 {
-   typedef void (*T)(A0, A1, A2, A3, A4);
-   static TypeInfo info()
+   typedef void (*Type)(A0, A1, A2, A3, A4);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind = kFunction;
-      fti.delegPtr = delegVoid5<A0, A1, A2, A3, A4>;
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
-      fti.members.add(new Member(getTypeAdd<A3>()));
-      fti.members.add(new Member(getTypeAdd<A4>()));
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoid5<A0, A1, A2, A3, A4>;
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
+      fti->members.add(new Member(getTypeAdd<A3>()));
+      fti->members.add(new Member(getTypeAdd<A4>()));
       return fti;
    }
 };
@@ -1116,19 +1264,27 @@ struct getType<void (*)(A0,A1,A2,A3,A4)>
 template <class R>
 Any delegRes0(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 0) throw "wrong number of params";
    R (*fp)() = *fp1;
    return fp();
 }
 template <class R>
 struct getType<R (*)()>
 {
-   typedef R (*T)();
-   static TypeInfo info()
+   typedef R (*Type)();
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.of = getTypeAdd<R>();
-      fti.delegPtr   = delegRes0<R>;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegRes0<R>;
       return fti;
    }
 };
@@ -1136,20 +1292,28 @@ struct getType<R (*)()>
 template <class R, class A0>
 Any delegRes1(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 1) throw "wrong number of params";
    R (*fp)(A0) = *fp1;
    return fp(params[0]);
 }
 template <class R, class A0>
 struct getType<R (*)(A0)>
 {
-   typedef R (*T)(A0);
-   static TypeInfo info()
+   typedef R (*Type)(A0);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.of = getTypeAdd<R>();
-      fti.delegPtr   = delegRes1<R, A0>;
-      fti.members.add(new Member(getTypeAdd<A0>()));
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegRes1<R, A0>;
+      fti->members.add(new Member(getTypeAdd<A0>()));
       return fti;
    }
 };
@@ -1157,21 +1321,29 @@ struct getType<R (*)(A0)>
 template <class R, class A0, class A1>
 Any delegRes2(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 2) throw "wrong number of params";
    R (*fp)(A0, A1) = *fp1;
    return fp(params[0], params[1]);
 }
 template <class R, class A0, class A1>
 struct getType<R (*)(A0,A1)>
 {
-   typedef R (*T)(A0, A1);
-   static TypeInfo info()
+   typedef R (*Type)(A0, A1);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.of = getTypeAdd<R>();
-      fti.delegPtr   = delegRes2<R, A0, A1>;
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegRes2<R, A0, A1>;
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
       return fti;
    }
 };
@@ -1179,22 +1351,30 @@ struct getType<R (*)(A0,A1)>
 template <class R, class A0, class A1, class A2>
 Any delegRes3(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 3) throw "wrong number of params";
    R (*fp)(A0, A1, A2) = *fp1;
    return fp(params[0], params[1], params[2]);
 }
 template <class R, class A0, class A1, class A2>
 struct getType<R (*)(A0,A1,A2)>
 {
-   typedef R (*T)(A0, A1, A2);
-   static TypeInfo info()
+   typedef R (*Type)(A0, A1, A2);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.of = getTypeAdd<R>();
-      fti.delegPtr   = delegRes3<R, A0, A1, A2>;
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegRes3<R, A0, A1, A2>;
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
       return fti;
    }
 };
@@ -1202,23 +1382,31 @@ struct getType<R (*)(A0,A1,A2)>
 template <class R, class A0, class A1, class A2, class A3>
 Any delegRes4(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 4) throw "wrong number of params";
    R (*fp)(A0, A1, A2, A3) = *fp1;
    return fp(params[0], params[1], params[2], params[3]);
 }
 template <class R, class A0, class A1, class A2, class A3>
 struct getType<R (*)(A0,A1,A2,A3)>
 {
-   typedef R (*T)(A0, A1, A2, A3);
-   static TypeInfo info()
+   typedef R (*Type)(A0, A1, A2, A3);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.of = getTypeAdd<R>();
-      fti.delegPtr   = delegRes4<R, A0, A1, A2, A3>;
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
-      fti.members.add(new Member(getTypeAdd<A3>()));
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegRes4<R, A0, A1, A2, A3>;
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
+      fti->members.add(new Member(getTypeAdd<A3>()));
       return fti;
    }
 };
@@ -1226,24 +1414,32 @@ struct getType<R (*)(A0,A1,A2,A3)>
 template <class R, class A0, class A1, class A2, class A3, class A4>
 Any delegRes5(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 5) throw "wrong number of params";
    R (*fp)(A0, A1, A2, A3, A4) = *fp1;
    return fp(params[0], params[1], params[2], params[3], params[4]);
 }
 template <class R, class A0, class A1, class A2, class A3, class A4>
 struct getType<R (*)(A0,A1,A2,A3,A4)>
 {
-   typedef R (*T)(A0, A1, A2, A3, A4);
-   static TypeInfo info()
+   typedef R (*Type)(A0, A1, A2, A3, A4);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.of = getTypeAdd<R>();
-      fti.delegPtr   = delegRes5<R, A0, A1, A2, A3, A4>;
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
-      fti.members.add(new Member(getTypeAdd<A3>()));
-      fti.members.add(new Member(getTypeAdd<A4>()));
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegRes5<R, A0, A1, A2, A3, A4>;
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
+      fti->members.add(new Member(getTypeAdd<A3>()));
+      fti->members.add(new Member(getTypeAdd<A4>()));
       return fti;
    }
 };
@@ -1252,6 +1448,7 @@ struct getType<R (*)(A0,A1,A2,A3,A4)>
 template <class C>
 Any delegVoidClass0(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 1) throw "wrong number of params";
    void (C::*fp)() = *fp1;
    (params[0].as<C>().*fp)();
    return Any(0);
@@ -1259,14 +1456,21 @@ Any delegVoidClass0(Any* fp1, Any* params, int64_t n)
 template <class C>
 struct getType<void (C::*)()>
 {
-   typedef void (C::*T)();
-   static TypeInfo info()
+   typedef void (C::*Type)();
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.delegPtr   = delegVoidClass0<C>;
-      fti.members.add(new Member(getTypeAdd<C>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoidClass0<C>;
+      fti->members.add(new Member(getTypeAdd<C>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1274,6 +1478,7 @@ struct getType<void (C::*)()>
 template <class C, class A0>
 Any delegVoidClass1(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 2) throw "wrong number of params";
    void (C::*fp)(A0) = *fp1;
    (params[0].as<C>().*fp)(params[1]);
    return Any(0);
@@ -1281,15 +1486,22 @@ Any delegVoidClass1(Any* fp1, Any* params, int64_t n)
 template <class C, class A0>
 struct getType<void (C::*)(A0)>
 {
-   typedef void (C::*T)(A0);
-   static TypeInfo info()
+   typedef void (C::*Type)(A0);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.delegPtr   = delegVoidClass1<C, A0>;
-      fti.members.add(new Member(getTypeAdd<C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoidClass1<C, A0>;
+      fti->members.add(new Member(getTypeAdd<C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1297,6 +1509,7 @@ struct getType<void (C::*)(A0)>
 template <class C, class A0, class A1>
 Any delegVoidClass2(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 3) throw "wrong number of params";
    void (C::*fp)(A0, A1) = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2]);
    return Any(0);
@@ -1304,16 +1517,23 @@ Any delegVoidClass2(Any* fp1, Any* params, int64_t n)
 template <class C, class A0, class A1>
 struct getType<void (C::*)(A0,A1)>
 {
-   typedef void (C::*T)(A0, A1);
-   static TypeInfo info()
+   typedef void (C::*Type)(A0, A1);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.delegPtr   = delegVoidClass2<C, A0, A1>;
-      fti.members.add(new Member(getTypeAdd<C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoidClass2<C, A0, A1>;
+      fti->members.add(new Member(getTypeAdd<C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1321,6 +1541,7 @@ struct getType<void (C::*)(A0,A1)>
 template <class C, class A0, class A1, class A2>
 Any delegVoidClass3(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 4) throw "wrong number of params";
    void (C::*fp)(A0, A1, A2) = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3]);
    return Any(0);
@@ -1328,17 +1549,24 @@ Any delegVoidClass3(Any* fp1, Any* params, int64_t n)
 template <class C, class A0, class A1, class A2>
 struct getType<void (C::*)(A0,A1,A2)>
 {
-   typedef void (C::*T)(A0, A1, A2);
-   static TypeInfo info()
+   typedef void (C::*Type)(A0, A1, A2);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.delegPtr   = delegVoidClass3<C, A0, A1, A2>;
-      fti.members.add(new Member(getTypeAdd<C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoidClass3<C, A0, A1, A2>;
+      fti->members.add(new Member(getTypeAdd<C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1346,6 +1574,7 @@ struct getType<void (C::*)(A0,A1,A2)>
 template <class C, class A0, class A1, class A2, class A3>
 Any delegVoidClass4(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 5) throw "wrong number of params";
    void (C::*fp)(A0, A1, A2, A3) = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4]);
    return Any(0);
@@ -1353,18 +1582,25 @@ Any delegVoidClass4(Any* fp1, Any* params, int64_t n)
 template <class C, class A0, class A1, class A2, class A3>
 struct getType<void (C::*)(A0,A1,A2,A3)>
 {
-   typedef void (C::*T)(A0, A1, A2, A3);
-   static TypeInfo info()
+   typedef void (C::*Type)(A0, A1, A2, A3);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.delegPtr   = delegVoidClass4<C, A0, A1, A2, A3>;
-      fti.members.add(new Member(getTypeAdd<C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
-      fti.members.add(new Member(getTypeAdd<A3>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoidClass4<C, A0, A1, A2, A3>;
+      fti->members.add(new Member(getTypeAdd<C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
+      fti->members.add(new Member(getTypeAdd<A3>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1372,6 +1608,7 @@ struct getType<void (C::*)(A0,A1,A2,A3)>
 template <class C, class A0, class A1, class A2, class A3, class A4>
 Any delegVoidClass5(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 6) throw "wrong number of params";
    void (C::*fp)(A0, A1, A2, A3, A4) = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4], params[5]);
    return Any(0);
@@ -1379,19 +1616,26 @@ Any delegVoidClass5(Any* fp1, Any* params, int64_t n)
 template <class C, class A0, class A1, class A2, class A3, class A4>
 struct getType<void (C::*)(A0,A1,A2,A3,A4)>
 {
-   typedef void (C::*T)(A0, A1, A2, A3, A4);
-   static TypeInfo info()
+   typedef void (C::*Type)(A0, A1, A2, A3, A4);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind     = kFunction;
-      fti.delegPtr = delegVoidClass5<C, A0, A1, A2, A3, A4>;
-      fti.members.add(new Member(getTypeAdd<C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
-      fti.members.add(new Member(getTypeAdd<A3>()));
-      fti.members.add(new Member(getTypeAdd<A4>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoidClass5<C, A0, A1, A2, A3, A4>;
+      fti->members.add(new Member(getTypeAdd<C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
+      fti->members.add(new Member(getTypeAdd<A3>()));
+      fti->members.add(new Member(getTypeAdd<A4>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1400,21 +1644,29 @@ struct getType<void (C::*)(A0,A1,A2,A3,A4)>
 template <class R, class C>
 Any delegResClass0(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 1) throw "wrong number of params";
    R (C::*fp)() = *fp1;
    return (params[0].as<C>().*fp)();
 }
 template <class R, class C>
 struct getType<R (C::*)()>
 {
-   typedef R (C::*T)();
-   static TypeInfo info()
+   typedef R (C::*Type)();
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind     = kFunction;
-      fti.of       = getTypeAdd<R>();
-      fti.delegPtr = delegResClass0<R, C>;
-      fti.members.add(new Member(getTypeAdd<C>()));
-      fti.member   = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegResClass0<R, C>;
+      fti->members.add(new Member(getTypeAdd<C>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1422,22 +1674,30 @@ struct getType<R (C::*)()>
 template <class R, class C, class A0>
 Any delegResClass1(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 2) throw "wrong number of params";
    R (C::*fp)(A0) = *fp1;
    return (params[0].as<C>().*fp)(params[1]);
 }
 template <class R, class C, class A0>
 struct getType<R (C::*)(A0)>
 {
-   typedef R (C::*T)(A0);
-   static TypeInfo info()
+   typedef R (C::*Type)(A0);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.of = getTypeAdd<R>();
-      fti.delegPtr   = delegResClass1<R, C, A0>;
-      fti.members.add(new Member(getTypeAdd<C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegResClass1<R, C, A0>;
+      fti->members.add(new Member(getTypeAdd<C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1445,23 +1705,31 @@ struct getType<R (C::*)(A0)>
 template <class R, class C, class A0, class A1>
 Any delegResClass2(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 3) throw "wrong number of params";
    R (C::*fp)(A0, A1) = *fp1;
    return (params[0].as<C>().*fp)(params[1], params[2]);
 }
 template <class R, class C, class A0, class A1>
 struct getType<R (C::*)(A0,A1)>
 {
-   typedef R (C::*T)(A0, A1);
-   static TypeInfo info()
+   typedef R (C::*Type)(A0, A1);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.of = getTypeAdd<R>();
-      fti.delegPtr   = delegResClass2<R, C, A0, A1>;
-      fti.members.add(new Member(getTypeAdd<C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegResClass2<R, C, A0, A1>;
+      fti->members.add(new Member(getTypeAdd<C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1469,24 +1737,32 @@ struct getType<R (C::*)(A0,A1)>
 template <class R, class C, class A0, class A1, class A2>
 Any delegResClass3(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 4) throw "wrong number of params";
    R (C::*fp)(A0, A1, A2) = *fp1;
    return (params[0].as<C>().*fp)(params[1], params[2], params[3]);
 }
 template <class R, class C, class A0, class A1, class A2>
 struct getType<R (C::*)(A0,A1,A2)>
 {
-   typedef R (C::*T)(A0, A1, A2);
-   static TypeInfo info()
+   typedef R (C::*Type)(A0, A1, A2);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.of = getTypeAdd<R>();
-      fti.delegPtr   = delegResClass3<R, C, A0, A1, A2>;
-      fti.members.add(new Member(getTypeAdd<C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegResClass3<R, C, A0, A1, A2>;
+      fti->members.add(new Member(getTypeAdd<C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1494,25 +1770,33 @@ struct getType<R (C::*)(A0,A1,A2)>
 template <class R, class C, class A0, class A1, class A2, class A3>
 Any delegResClass4(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 5) throw "wrong number of params";
    R (C::*fp)(A0, A1, A2, A3) = *fp1;
    return (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4]);
 }
 template <class R, class C, class A0, class A1, class A2, class A3>
 struct getType<R (C::*)(A0,A1,A2,A3)>
 {
-   typedef R (C::*T)(A0, A1, A2, A3);
-   static TypeInfo info()
+   typedef R (C::*Type)(A0, A1, A2, A3);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.of = getTypeAdd<R>();
-      fti.delegPtr   = delegResClass4<R, C, A0, A1, A2, A3>;
-      fti.members.add(new Member(getTypeAdd<C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
-      fti.members.add(new Member(getTypeAdd<A3>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegResClass4<R, C, A0, A1, A2, A3>;
+      fti->members.add(new Member(getTypeAdd<C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
+      fti->members.add(new Member(getTypeAdd<A3>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1520,26 +1804,34 @@ struct getType<R (C::*)(A0,A1,A2,A3)>
 template <class R, class C, class A0, class A1, class A2, class A3, class A4>
 Any delegResClass5(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 6) throw "wrong number of params";
    R (C::*fp)(A0, A1, A2, A3, A4) = *fp1;
    return (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4], params[5]);
 }
 template <class R, class C, class A0, class A1, class A2, class A3, class A4>
 struct getType<R (C::*)(A0,A1,A2,A3,A4)>
 {
-   typedef R (C::*T)(A0, A1, A2, A3, A4);
-   static TypeInfo info()
+   typedef R (C::*Type)(A0, A1, A2, A3, A4);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.of = getTypeAdd<R>();
-      fti.delegPtr   = delegResClass5<R, C, A0, A1, A2, A3, A4>;
-      fti.members.add(new Member(getTypeAdd<C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
-      fti.members.add(new Member(getTypeAdd<A3>()));
-      fti.members.add(new Member(getTypeAdd<A4>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegResClass5<R, C, A0, A1, A2, A3, A4>;
+      fti->members.add(new Member(getTypeAdd<C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
+      fti->members.add(new Member(getTypeAdd<A3>()));
+      fti->members.add(new Member(getTypeAdd<A4>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1548,6 +1840,7 @@ struct getType<R (C::*)(A0,A1,A2,A3,A4)>
 template <class C>
 Any delegVoidConstClass0(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 1) throw "wrong number of params";
    void (C::*fp)() const = *fp1;
    (params[0].as<C>().*fp)();
    return Any(0);
@@ -1555,14 +1848,21 @@ Any delegVoidConstClass0(Any* fp1, Any* params, int64_t n)
 template <class C>
 struct getType<void (C::*)() const>
 {
-   typedef void (C::*T)();
-   static TypeInfo info()
+   typedef void (C::*Type)();
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.delegPtr   = delegVoidConstClass0<C>;
-      fti.members.add(new Member(getTypeAdd<const C>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoidConstClass0<C>;
+      fti->members.add(new Member(getTypeAdd<const C>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1570,6 +1870,7 @@ struct getType<void (C::*)() const>
 template <class C, class A0>
 Any delegVoidConstClass1(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 2) throw "wrong number of params";
    void (C::*fp)(A0) const = *fp1;
    (params[0].as<C>().*fp)(params[1]);
    return Any(0);
@@ -1577,15 +1878,22 @@ Any delegVoidConstClass1(Any* fp1, Any* params, int64_t n)
 template <class C, class A0>
 struct getType<void (C::*)(A0) const>
 {
-   typedef void (C::*T)(A0);
-   static TypeInfo info()
+   typedef void (C::*Type)(A0);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.delegPtr   = delegVoidConstClass1<C, A0>;
-      fti.members.add(new Member(getTypeAdd<const C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoidConstClass1<C, A0>;
+      fti->members.add(new Member(getTypeAdd<const C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1593,6 +1901,7 @@ struct getType<void (C::*)(A0) const>
 template <class C, class A0, class A1>
 Any delegVoidConstClass2(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 3) throw "wrong number of params";
    void (C::*fp)(A0, A1) const = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2]);
    return Any(0);
@@ -1600,16 +1909,23 @@ Any delegVoidConstClass2(Any* fp1, Any* params, int64_t n)
 template <class C, class A0, class A1>
 struct getType<void (C::*)(A0,A1) const>
 {
-   typedef void (C::*T)(A0, A1);
-   static TypeInfo info()
+   typedef void (C::*Type)(A0, A1);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.delegPtr   = delegVoidConstClass2<C, A0, A1>;
-      fti.members.add(new Member(getTypeAdd<const C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoidConstClass2<C, A0, A1>;
+      fti->members.add(new Member(getTypeAdd<const C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1617,6 +1933,7 @@ struct getType<void (C::*)(A0,A1) const>
 template <class C, class A0, class A1, class A2>
 Any delegVoidConstClass3(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 4) throw "wrong number of params";
    void (C::*fp)(A0, A1, A2) const = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3]);
    return Any(0);
@@ -1624,17 +1941,24 @@ Any delegVoidConstClass3(Any* fp1, Any* params, int64_t n)
 template <class C, class A0, class A1, class A2>
 struct getType<void (C::*)(A0,A1,A2) const>
 {
-   typedef void (C::*T)(A0, A1, A2);
-   static TypeInfo info()
+   typedef void (C::*Type)(A0, A1, A2);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.delegPtr   = delegVoidConstClass3<C, A0, A1, A2>;
-      fti.members.add(new Member(getTypeAdd<const C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoidConstClass3<C, A0, A1, A2>;
+      fti->members.add(new Member(getTypeAdd<const C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1642,6 +1966,7 @@ struct getType<void (C::*)(A0,A1,A2) const>
 template <class C, class A0, class A1, class A2, class A3>
 Any delegVoidConstClass4(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 5) throw "wrong number of params";
    void (C::*fp)(A0, A1, A2, A3) const = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4]);
    return Any(0);
@@ -1649,18 +1974,25 @@ Any delegVoidConstClass4(Any* fp1, Any* params, int64_t n)
 template <class C, class A0, class A1, class A2, class A3>
 struct getType<void (C::*)(A0,A1,A2,A3) const>
 {
-   typedef void (C::*T)(A0, A1, A2, A3);
-   static TypeInfo info()
+   typedef void (C::*Type)(A0, A1, A2, A3);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.delegPtr   = delegVoidConstClass4<C, A0, A1, A2, A3>;
-      fti.members.add(new Member(getTypeAdd<const C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
-      fti.members.add(new Member(getTypeAdd<A3>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoidConstClass4<C, A0, A1, A2, A3>;
+      fti->members.add(new Member(getTypeAdd<const C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
+      fti->members.add(new Member(getTypeAdd<A3>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1668,6 +2000,7 @@ struct getType<void (C::*)(A0,A1,A2,A3) const>
 template <class C, class A0, class A1, class A2, class A3, class A4>
 Any delegVoidConstClass5(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 6) throw "wrong number of params";
    void (C::*fp)(A0, A1, A2, A3, A4) const = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4], params[5]);
    return Any(0);
@@ -1675,19 +2008,26 @@ Any delegVoidConstClass5(Any* fp1, Any* params, int64_t n)
 template <class C, class A0, class A1, class A2, class A3, class A4>
 struct getType<void (C::*)(A0,A1,A2,A3,A4) const>
 {
-   typedef void (C::*T)(A0, A1, A2, A3, A4);
-   static TypeInfo info()
+   typedef void (C::*Type)(A0, A1, A2, A3, A4);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.delegPtr   = delegVoidConstClass5<C, A0, A1, A2, A3, A4>;
-      fti.members.add(new Member(getTypeAdd<const C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
-      fti.members.add(new Member(getTypeAdd<A3>()));
-      fti.members.add(new Member(getTypeAdd<A4>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->delegPtr = delegVoidConstClass5<C, A0, A1, A2, A3, A4>;
+      fti->members.add(new Member(getTypeAdd<const C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
+      fti->members.add(new Member(getTypeAdd<A3>()));
+      fti->members.add(new Member(getTypeAdd<A4>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1696,21 +2036,29 @@ struct getType<void (C::*)(A0,A1,A2,A3,A4) const>
 template <class R, class C>
 Any delegResConstClass0(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 1) throw "wrong number of params";
    R (C::*fp)() const = *fp1;
    return (params[0].as<C>().*fp)();
 }
 template <class R, class C>
 struct getType<R (C::*)() const>
 {
-   typedef R (C::*T)();
-   static TypeInfo info()
+   typedef R (C::*Type)();
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.of = getTypeAdd<R>();
-      fti.delegPtr   = delegResConstClass0<R, C>;
-      fti.members.add(new Member(getTypeAdd<const C>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegResConstClass0<R, C>;
+      fti->members.add(new Member(getTypeAdd<const C>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1718,22 +2066,30 @@ struct getType<R (C::*)() const>
 template <class R, class C, class A0>
 Any delegResConstClass1(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 2) throw "wrong number of params";
    R (C::*fp)(A0) const = *fp1;
    return (params[0].as<C>().*fp)(params[1]);
 }
 template <class R, class C, class A0>
 struct getType<R (C::*)(A0) const>
 {
-   typedef R (C::*T)(A0);
-   static TypeInfo info()
+   typedef R (C::*Type)(A0);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.of = getTypeAdd<R>();
-      fti.delegPtr   = delegResConstClass1<R, C, A0>;
-      fti.members.add(new Member(getTypeAdd<const C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegResConstClass1<R, C, A0>;
+      fti->members.add(new Member(getTypeAdd<const C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1741,23 +2097,31 @@ struct getType<R (C::*)(A0) const>
 template <class R, class C, class A0, class A1>
 Any delegResConstClass2(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 3) throw "wrong number of params";
    R (C::*fp)(A0, A1) const = *fp1;
    return (params[0].as<C>().*fp)(params[1], params[2]);
 }
 template <class R, class C, class A0, class A1>
 struct getType<R (C::*)(A0,A1) const>
 {
-   typedef R (C::*T)(A0, A1);
-   static TypeInfo info()
+   typedef R (C::*Type)(A0, A1);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.of = getTypeAdd<R>();
-      fti.delegPtr   = delegResConstClass2<R, C, A0, A1>;
-      fti.members.add(new Member(getTypeAdd<const C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegResConstClass2<R, C, A0, A1>;
+      fti->members.add(new Member(getTypeAdd<const C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1765,24 +2129,32 @@ struct getType<R (C::*)(A0,A1) const>
 template <class R, class C, class A0, class A1, class A2>
 Any delegResConstClass3(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 4) throw "wrong number of params";
    R (C::*fp)(A0, A1, A2) const = *fp1;
    return (params[0].as<C>().*fp)(params[1], params[2], params[3]);
 }
 template <class R, class C, class A0, class A1, class A2>
 struct getType<R (C::*)(A0,A1,A2) const>
 {
-   typedef R (C::*T)(A0, A1, A2);
-   static TypeInfo info()
+   typedef R (C::*Type)(A0, A1, A2);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.of = getTypeAdd<R>();
-      fti.delegPtr   = delegResConstClass3<R, C, A0, A1, A2>;
-      fti.members.add(new Member(getTypeAdd<const C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegResConstClass3<R, C, A0, A1, A2>;
+      fti->members.add(new Member(getTypeAdd<const C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1790,25 +2162,33 @@ struct getType<R (C::*)(A0,A1,A2) const>
 template <class R, class C, class A0, class A1, class A2, class A3>
 Any delegResConstClass4(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 5) throw "wrong number of params";
    R (C::*fp)(A0, A1, A2, A3) const = *fp1;
    return (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4]);
 }
 template <class R, class C, class A0, class A1, class A2, class A3>
 struct getType<R (C::*)(A0,A1,A2,A3) const>
 {
-   typedef R (C::*T)(A0, A1, A2, A3);
-   static TypeInfo info()
+   typedef R (C::*Type)(A0, A1, A2, A3);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.of = getTypeAdd<R>();
-      fti.delegPtr   = delegResConstClass4<R, C, A0, A1, A2, A3>;
-      fti.members.add(new Member(getTypeAdd<const C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
-      fti.members.add(new Member(getTypeAdd<A3>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegResConstClass4<R, C, A0, A1, A2, A3>;
+      fti->members.add(new Member(getTypeAdd<const C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
+      fti->members.add(new Member(getTypeAdd<A3>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1816,26 +2196,34 @@ struct getType<R (C::*)(A0,A1,A2,A3) const>
 template <class R, class C, class A0, class A1, class A2, class A3, class A4>
 Any delegResConstClass5(Any* fp1, Any* params, int64_t n)
 {
+   if (n != 6) throw "wrong number of params";
    R (C::*fp)(A0, A1, A2, A3, A4) const = *fp1;
    return (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4], params[5]);
 }
 template <class R, class C, class A0, class A1, class A2, class A3, class A4>
 struct getType<R (C::*)(A0,A1,A2,A3,A4) const>
 {
-   typedef R (C::*T)(A0, A1, A2, A3, A4);
-   static TypeInfo info()
+   typedef R (C::*Type)(A0, A1, A2, A3, A4);
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind   = kFunction;
-      fti.of = getTypeAdd<R>();
-      fti.delegPtr   = delegResConstClass5<R, C, A0, A1, A2, A3, A4>;
-      fti.members.add(new Member(getTypeAdd<const C>()));
-      fti.members.add(new Member(getTypeAdd<A0>()));
-      fti.members.add(new Member(getTypeAdd<A1>()));
-      fti.members.add(new Member(getTypeAdd<A2>()));
-      fti.members.add(new Member(getTypeAdd<A3>()));
-      fti.members.add(new Member(getTypeAdd<A4>()));
-      fti.member = true;
+      TypeInfo* fti = new TypeInfo;
+      fti->cpp      = true;
+      fti->cType    = &typeid(Type);
+      fti->name     = typeid(Type).name();
+      fti->fullName = typeid(Type).name();
+      fti->size     = sizeof(Type);
+      fti->copyCon  = CopyCon<Type>::go;
+      fti->destruct = destructnothing;
+      fti->kind     = kFunction;
+      fti->of       = getTypeAdd<R>();
+      fti->delegPtr = delegResConstClass5<R, C, A0, A1, A2, A3, A4>;
+      fti->members.add(new Member(getTypeAdd<const C>()));
+      fti->members.add(new Member(getTypeAdd<A0>()));
+      fti->members.add(new Member(getTypeAdd<A1>()));
+      fti->members.add(new Member(getTypeAdd<A2>()));
+      fti->members.add(new Member(getTypeAdd<A3>()));
+      fti->members.add(new Member(getTypeAdd<A4>()));
+      fti->member = true;
       return fti;
    }
 };
@@ -1943,7 +2331,7 @@ struct MMBase
       mms.erase(this);
    }
    void add(Any method);
-   int  compareMethods(Any& lhs, Any& rhs, TypeList &at);
+   int64_t  compareMethods(Any& lhs, Any& rhs, TypeList &at);
    void buildTable();
    void findMostDerived(int64_t paramIndex, TypeInfo* type);
    void fillParamTypesInOrder(int64_t paramIndex, TypeInfo* type);
@@ -2045,13 +2433,20 @@ struct MultimethodVoid : public Multimethod<Any>
 template <>
 struct getType<MMBase>
 {
-   static TypeInfo info()
+   typedef MMBase Type;
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<MMBase>());
-      fti.multimethod = true;
-      //for (size_t i = 0; i < mm.nargs; ++i)
-      //   fti.members.add(getTypeAdd<Any>());
-      return fti;
+      TypeInfo* typeInfo = new TypeInfo;
+      typeInfo->cpp      = true;
+      typeInfo->cType    = &typeid(Type);
+      typeInfo->name     = typeid(Type).name();
+      typeInfo->fullName = typeid(Type).name();
+      typeInfo->size     = sizeof(Type);
+      typeInfo->delegPtr = nullptr;
+      typeInfo->copyCon  = CopyCon<Type>::go;
+      typeInfo->destruct  = Destruct<Type>::go;
+      typeInfo->multimethod = true;
+      return typeInfo;
    }
 };
 
@@ -2066,30 +2461,42 @@ Any delegMMV(Any* mm, Any* args, int64_t n);
 template <class R>
 struct getType<Multimethod<R>>
 {
-   static TypeInfo info()
+   typedef Multimethod<R> Type;
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<Multimethod<R>>());
-      fti.multimethod = true;
-      fti.of = getTypeAdd<R>();
-      //for (size_t i = 0; i < mm.nargs; ++i)
-      //   fti.members.add(getTypeAdd<Any>());
-      fti.delegPtr = delegMM<R>;
-      return fti;
+      TypeInfo* typeInfo = new TypeInfo;
+      typeInfo->cpp      = true;
+      typeInfo->cType    = &typeid(Type);
+      typeInfo->name     = typeid(Type).name();
+      typeInfo->fullName = typeid(Type).name();
+      typeInfo->size     = sizeof(Type);
+      typeInfo->copyCon  = CopyCon<Type>::go;
+      typeInfo->destruct  = Destruct<Type>::go;
+      typeInfo->multimethod = true;
+      typeInfo->of       = getTypeAdd<R>();
+      typeInfo->delegPtr = delegMM<R>;
+      return typeInfo;
    }
 };
 
 template <>
 struct getType<Multimethod<void>>
 {
-   static TypeInfo info()
+   typedef Multimethod<void> Type;
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<Multimethod<void>>());
-      fti.multimethod = true;
-      fti.of = getTypeAdd<void>();
-      //for (size_t i = 0; i < mm.nargs; ++i)
-      //   fti.members.add(getTypeAdd<Any>());
-      fti.delegPtr = delegMMV;
-      return fti;
+      TypeInfo* typeInfo = new TypeInfo;
+      typeInfo->cpp      = true;
+      typeInfo->cType    = &typeid(Type);
+      typeInfo->name     = typeid(Type).name();
+      typeInfo->fullName = typeid(Type).name();
+      typeInfo->size     = sizeof(Type);
+      typeInfo->copyCon  = CopyCon<Type>::go;
+      typeInfo->destruct  = Destruct<Type>::go;
+      typeInfo->multimethod = true;
+      typeInfo->of       = getTypeAdd<void>();
+      typeInfo->delegPtr = delegMMV;
+      return typeInfo;
    }
 };
 
@@ -2104,34 +2511,44 @@ Any delegMMPV(Any* mm, Any* args, int64_t n);
 template <class R>
 struct getType<Multimethod<R>*>
 {
-   static TypeInfo info()
+   typedef Multimethod<R>* Type;
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<Multimethod<R>*>());
-      fti.multimethod = true;
-      //fti.of = getTypeAdd<R>();
-      //for (size_t i = 0; i < mm.nargs; ++i)
-      //   fti.members.add(getTypeAdd<Any>());
-      fti.delegPtr = delegMMP<R>;
-      fti.kind = kPointer;
-      fti.of = getTypeAdd<Multimethod<R>>();
-      return fti;
+      TypeInfo* typeInfo = new TypeInfo;
+      typeInfo->cpp      = true;
+      typeInfo->cType    = &typeid(Type);
+      typeInfo->name     = typeid(Type).name();
+      typeInfo->fullName = typeid(Type).name();
+      typeInfo->size     = sizeof(Type);
+      typeInfo->copyCon  = CopyCon<Type>::go;
+      typeInfo->destruct  = Destruct<Type>::go;
+      typeInfo->multimethod = true;
+      typeInfo->of       = getTypeAdd<Multimethod<R>>();
+      typeInfo->delegPtr = delegMMP<R>;
+      typeInfo->kind     = kPointer;
+      return typeInfo;
    }
 };
 
 template <>
 struct getType<Multimethod<void>*>
 {
-   static TypeInfo info()
+   typedef Multimethod<void>* Type;
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<Multimethod<void>*>());
-      fti.multimethod = true;
-      //fti.of = getTypeAdd<R>();
-      //for (size_t i = 0; i < mm.nargs; ++i)
-      //   fti.members.add(getTypeAdd<Any>());
-      fti.delegPtr = delegMMPV;
-      fti.kind = kPointer;
-      fti.of = getTypeAdd<Multimethod<void>>();
-      return fti;
+      TypeInfo* typeInfo = new TypeInfo;
+      typeInfo->cpp      = true;
+      typeInfo->cType    = &typeid(Type);
+      typeInfo->name     = typeid(Type).name();
+      typeInfo->fullName = typeid(Type).name();
+      typeInfo->size     = sizeof(Type);
+      typeInfo->copyCon  = CopyCon<Type>::go;
+      typeInfo->destruct  = Destruct<Type>::go;
+      typeInfo->multimethod = true;
+      typeInfo->of       = getTypeAdd<Multimethod<void>>();
+      typeInfo->delegPtr = delegMMPV;
+      typeInfo->kind     = kPointer;
+      return typeInfo;
    }
 };
 
@@ -2147,28 +2564,71 @@ extern MissingArg mA;
 struct PartApply
 {
    int64_t pArgsFixed;
-   std::vector<Any> argsFixed;
-   Any      (*delegPtr)(Any* fp , Any* params, int64_t np);
+   Vec     argsFixed;
 };
 
-PartApply* makePartApply(Any f, Any a0);
-PartApply* makePartApply(Any f, Any a0, Any a1);
+PartApply* partApply(Any f, Any a0);
+PartApply* partApply(Any f, Any a0, Any a1);
 
 Any delegPartApply(Any* cl, Any* args, int64_t n);
 
 template <>
 struct getType<PartApply*>
 {
-   static TypeInfo info()
+   typedef PartApply* Type;
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<PartApply*>());
-      //fti.of = getTypeAdd<R>();
-      //for (size_t i = 0; i < mm.nargs; ++i)
-      //   fti.members.add(getTypeAdd<Any>());
-      fti.delegPtr = delegPartApply;
-      fti.kind = kPointer;
-      fti.of = getTypeAdd<PartApply>();
-      return fti;
+      TypeInfo* typeInfo = new TypeInfo;
+      typeInfo->cpp      = true;
+      typeInfo->cType    = &typeid(Type);
+      typeInfo->name     = typeid(Type).name();
+      typeInfo->fullName = typeid(Type).name();
+      typeInfo->size     = sizeof(Type);
+      typeInfo->copyCon  = CopyCon<Type>::go;
+      typeInfo->destruct = Destruct<Type>::go;
+      typeInfo->of       = getTypeAdd<PartApply>();
+      typeInfo->delegPtr = delegPartApply;
+      typeInfo->kind     = kPointer;
+      return typeInfo;
+   }
+};
+
+struct PH
+{
+   int64_t n;
+   PH(int64_t n) : n(n) {}
+};
+
+extern TypeInfo* tiPH;
+
+struct Bind
+{
+   Vec params;
+       Bind(Vec params) : params(params) {}
+};
+
+Any delegBind(Any* cl, Any* args, int64_t n);
+
+Any bind(Any* args, int64_t nargs);
+
+template <>
+struct getType<Bind*>
+{
+   typedef Bind* Type;
+   static TypeInfo* go()
+   {
+      TypeInfo* typeInfo = new TypeInfo;
+      typeInfo->cpp      = true;
+      typeInfo->cType    = &typeid(Type);
+      typeInfo->name     = typeid(Type).name();
+      typeInfo->fullName = typeid(Type).name();
+      typeInfo->size     = sizeof(Type);
+      typeInfo->copyCon  = CopyCon<Type>::go;
+      typeInfo->destruct = Destruct<Type>::go;
+      typeInfo->of       = getTypeAdd<Bind>();
+      typeInfo->delegPtr = delegBind;
+      typeInfo->kind     = kPointer;
+      return typeInfo;
    }
 };
 
@@ -2189,20 +2649,35 @@ Any delegVF(Any* fp, Any* args, int64_t n);
 template <>
 struct getType<VarFunc>
 {
-   static TypeInfo info()
+   typedef VarFunc Type;
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<VarFunc>());
-      fti.of = getTypeAdd<Any>();
-      fti.delegPtr = delegVF;
-      return fti;
+      TypeInfo* typeInfo = new TypeInfo;
+      typeInfo->cpp      = true;
+      typeInfo->cType    = &typeid(Type);
+      typeInfo->name     = typeid(Type).name();
+      typeInfo->fullName = typeid(Type).name();
+      typeInfo->size     = sizeof(Type);
+      typeInfo->copyCon  = CopyCon<Type>::go;
+      typeInfo->destruct = Destruct<Type>::go;
+      typeInfo->of       = getTypeAdd<Any>();
+      typeInfo->delegPtr = delegVF;
+      return typeInfo;
    }
 };
-                
+
+template <class F>
+struct Functor
+{
+   F f;
+   Any call;
+};
+
 struct Var
 {
    std::string   name;
-   Any      value;
-   int64_t      offset;
+   Any           value;
+   int64_t       offset;
    Var(                           ) :                           offset(0) {}
    Var(std::string name           ) : name(name),               offset(0) {}
    Var(std::string name, Any value) : name(name), value(value), offset(0) {}
@@ -2245,22 +2720,53 @@ namespace Struct
       Closure(Lambda* lambda, Stack* context) : lambda(lambda), context(context) {}
    };
 
-   Any closureDeleg(Any* closure, Any* args, int64_t na);
+   Any applyAnyClosure(Any* closure, Any* args, int64_t nargs);
+
+   extern Stack* stack;
 }
 
 template <>
 struct getType<List::Closure*>
 {
-   typedef List::Closure* T;
-   static TypeInfo info()
+   typedef List::Closure* Type;
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<T>());
-      fti.kind = kPointer;
-      fti.of = getTypeAdd<List::Closure>();
-      fti.delegPtr = List::closureDeleg;
-      return fti;
+      TypeInfo* typeInfo = new TypeInfo;
+      typeInfo->cpp      = true;
+      typeInfo->cType    = &typeid(Type);
+      typeInfo->name     = typeid(Type).name();
+      typeInfo->fullName = typeid(Type).name();
+      typeInfo->size     = sizeof(Type);
+      typeInfo->copyCon  = CopyCon<Type>::go;
+      typeInfo->destruct = Destruct<Type>::go;
+      typeInfo->of       = getTypeAdd<List::Closure>();
+      typeInfo->delegPtr = List::closureDeleg;
+      typeInfo->kind     = kPointer;
+      return typeInfo;
+   }
+};
+
+template <>
+struct getType<Struct::Closure*>
+{
+   typedef Struct::Closure* Type;
+   static TypeInfo* go()
+   {
+      TypeInfo* typeInfo = new TypeInfo;
+      typeInfo->cpp      = true;
+      typeInfo->cType    = &typeid(Type);
+      typeInfo->name     = typeid(Type).name();
+      typeInfo->fullName = typeid(Type).name();
+      typeInfo->size     = sizeof(Type);
+      typeInfo->copyCon  = CopyCon<Type>::go;
+      typeInfo->destruct = Destruct<Type>::go;
+      typeInfo->of       = getTypeAdd<Struct::Closure>();
+      typeInfo->delegPtr = Struct::applyAnyClosure;
+      typeInfo->kind     = kPointer;
+      return typeInfo;
    }
 };
 
 
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  

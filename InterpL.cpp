@@ -42,7 +42,7 @@ void InterpL::push(Any expr, Frame* env)
 
 void InterpL::push(Vec* todo, Frame* env)
 {
-   for (size_t i = todo->size() - 1; i >= 0; --i)
+   for (int64_t i = todo->size() - 1; i >= 0; --i)
       push((*todo)[i], env);
 }
 
@@ -363,7 +363,7 @@ void InterpL::apply(Any func, Vec* a)
          //else                                                        
             //newEnv->vars.push_back(Var(string("arg")+i, members[i]));
       }
-      for (size_t i = nArgs - 1; i >= 0; --i)
+      for (int64_t i = nArgs - 1; i >= 0; --i)
       {
          if (isBlank(args[i]))
             resArgList = cons(getSymbol(string("arg")+i), resArgList);
@@ -637,7 +637,7 @@ Closure* createLambda(Any func, int64_t nArgs)
       lambda->params.push_back(Var(string("arg")+i));
 
    Cons* argList = nullptr;
-   for (size_t i = nArgs - 1; i >= 0; --i)
+   for (int64_t i = nArgs - 1; i >= 0; --i)
       argList = cons(getSymbol(string("arg")+i), argList);
 
    lambda->body = cons(func, argList);
@@ -730,7 +730,7 @@ Any apply1(Any func, Vec* a)
          //else                                                        
             //newEnv->vars.push_back(Var(string("arg")+i, members[i]));
       }
-      for (size_t i = nArgs - 1; i >= 0; --i)
+      for (int64_t i = nArgs - 1; i >= 0; --i)
       {
          if (isBlank(args[i]))
             resArgList = cons(getSymbol(string("arg")+i), resArgList);

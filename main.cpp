@@ -58,6 +58,7 @@ int _tmain(int argc, _TCHAR* argv[])
 #endif
 {
    setup();
+   Struct::setupInterp();
    Test t;
    Test2 t2;
    Any f(&Test::vfunc);
@@ -88,7 +89,15 @@ int _tmain(int argc, _TCHAR* argv[])
       {
          case 1:
          {
-            parse(expr, input);
+            ParseResult* r = parse(expr, input);
+            if (r)
+            {
+               Struct::compile(r->ast, Struct::stack);
+               cout << Struct::eval(r->ast, Struct::stack) << endl;
+            }
+            else
+               cout << "parse error" << endl;
+            break;
          }
          case 2:
          {
@@ -99,9 +108,9 @@ int _tmain(int argc, _TCHAR* argv[])
             Any res = List::eval(expr, userFrame);
             cout << res << endl;
             cout << toText(res.typeInfo) << endl;
+            break;
          }
       }
    }
-   cin.get();
    return 0;
 }

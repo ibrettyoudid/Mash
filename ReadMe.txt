@@ -1,4 +1,13 @@
 
+Garbage collection
+
+White: unscanned, may or may not be reachable
+Grey: reachable and scanning
+Black: reachable scanned
+
+Everything starts off in the white set except the roots which are grey
+
+
 
 Git is at C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\TeamFoundation\Team Explorer\Git\cmd
 

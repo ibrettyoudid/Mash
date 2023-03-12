@@ -22,9 +22,9 @@ struct Gen
 struct Type;
 
 typedef double Num;
-typedef std::vector<Any>        Vec;
 typedef Vec::iterator           VecI;
 typedef Vec::const_iterator     VecCI;
+Vec makeVec(Any* args, int64_t nargs);
 
 typedef std::deque<Var>         DequeVar;
 typedef std::deque<Var*>        DequePVar;
@@ -138,13 +138,21 @@ Any delegCompose(Any* _compose, Any* args, int64_t n);
 template <>
 struct getType<Compose*>
 {
-   static TypeInfo info()
+   typedef Compose* Type;
+   static TypeInfo* go()
    {
-      TypeInfo fti(getTypeBase<Compose*>());
-      //for (size_t i = 0; i < mm.nargs; ++i)
-      //   fti.members.add(getTypeAdd<Any>());
-      fti.delegPtr = delegCompose;
-      return fti;
+      TypeInfo* typeInfo = new TypeInfo;
+      typeInfo->cpp      = true;
+      typeInfo->cType    = &typeid(Type);
+      typeInfo->name     = typeid(Type).name();
+      typeInfo->fullName = typeid(Type).name();
+      typeInfo->size     = sizeof(Type);
+      typeInfo->copyCon  = CopyCon<Type>::go;
+      typeInfo->destruct  = Destruct<Type>::go;
+      typeInfo->of       = getTypeAdd<Compose>();
+      typeInfo->delegPtr = delegCompose;
+      typeInfo->kind     = kPointer;
+      return typeInfo;
    }
 };
 
@@ -172,9 +180,10 @@ struct VarRef
 extern Symbol *symBlankArg;
 extern Cons   *nil;
 
-extern Multimethod<Any>  convert    ;
-extern Multimethod<Any>  pushBack   ;
-extern Multimethod<void> insertElemX;
+extern Multimethod<Any>    convert    ;
+extern Multimethod<Any>    pushBack   ;
+extern Multimethod<void>   insertElemX;
+extern Multimethod<std::string> toTextAux  ;
 
 extern TypeInfo* tiAny     ;
 extern TypeInfo* tiSymbol  ;
@@ -192,6 +201,12 @@ extern TypeInfo* tiVarFunc ;
 extern TypeInfo* tiVec     ;
 
 extern Frame*    globalFrame;
+
+namespace Struct
+{
+   extern Any globalFrame;
+}
+
 
 std::string toText        (Any a       , int64_t max = LLONG_MAX);
 std::string toTextInt     (int64_t n   , int64_t max = LLONG_MAX);
