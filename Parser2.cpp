@@ -66,6 +66,8 @@ void ReplaceNamesIterator::visit(Rule*& rule)
    rule->accept(this);
 }
 
+void Lambda::accept(ExprIterator* iterator) { iterator->visit(body); };
+
 Epsilon::Epsilon()                      {}
 Range  ::Range  (char min, char max)    : min(min), max(max) {}
 Char   ::Char   (char c)                : c(c) {}
@@ -570,14 +572,20 @@ Expr* applicationR(Vec in)
    return new Apply(args);
 }
 
+
+
 Lambda* lambdaR(Vec in)
 {
-   TypeInfo* type = typeInfoInterp("lambdaParams");
+   TypeInfo* type = newTypeInterp("lambdaParams");
    for (Any p : Vec(in[1]))
-      if (p.typeInfo == tiWhiteSpaceE)
-         type->add(new Member(getSymbol(p.as<WhiteSpaceE*>()->inner.as<Identifier*>()->span.str()), tiAny));
+   {
+      Identifier* i;
+      if (p.typeInfo == tiWhiteSpaceE->ptr)
+         i = p.as<WhiteSpaceE*>()->inner;
       else
-         type->add(new Member(getSymbol(p.as<Identifier*>()->span.str()), tiAny));
+         i = p;
+      type->add(new Member(getSymbol(i->span.str()), tiAny));
+   }
    return new Lambda(type, in[3]);
 }
 
@@ -760,7 +768,7 @@ void setupParser2()
    addTypeLink(tiExpr, tiApply);
    addTypeLink(tiExpr, tiLambda);
    toTextAux.add(toTextLiteral);
-   toTextAux.add(toTextIdentifier);
+   //toTextAux.add(toTextIdentifier);
    toTextAux.add(toTextWhiteSpaceE);
    addMember(&Apply::elems, "elems");
 }

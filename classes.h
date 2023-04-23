@@ -213,6 +213,7 @@ std::string toTextInt     (int64_t n   , int64_t max = LLONG_MAX);
 std::string toTextIntR    (int64_t&    , int64_t max = LLONG_MAX);
 std::string toTextTypeInfo(TypeInfo* ti, int64_t max = LLONG_MAX);
 std::string toTextAny     (Any a       , int64_t max = LLONG_MAX);
+std::string toTextAny1    (const Any& b, int64_t max = LLONG_MAX);
 
 void        setup       ();
 Cons*       mylist      ();

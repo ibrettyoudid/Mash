@@ -266,12 +266,6 @@ struct ExprIterator
    virtual void visit(Expr* expr) = 0;
 };
 
-struct Expr
-{
-   virtual      ~Expr () {}
-   virtual void accept(ExprIterator* iterator) {};
-};
-
 struct EpsilonE : public Expr
 {
    EpsilonE() {}
@@ -347,14 +341,6 @@ struct Apply : public Expr
    std::vector<Expr*>  elems;
    Apply(std::vector<Expr*> elems) : elems(elems) {}
    virtual void accept(ExprIterator* iterator) { for (auto e : elems) iterator->visit(e); };
-};
-
-struct Lambda : public Expr
-{
-   TypeInfo* type;
-   Expr*     body;
-   Lambda(TypeInfo* type, Expr* body) : type(type), body(body) { }
-   virtual void accept(ExprIterator* iterator) { iterator->visit(body); };
 };
 
 struct Skipped : public Expr

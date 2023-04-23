@@ -66,6 +66,7 @@ Any  operator* (Any a)        { return mderef(a); }
 
 TypeInfo* tiAny     ;
 TypeInfo* tiPH      ;
+TypeInfo* tiMissingArg;
 TypeInfo* tiSymbol  ;
 TypeInfo* tiCons    ;
 TypeInfo* tiChar    ;
@@ -93,6 +94,7 @@ TypeInfo* tiString  ;
 TypeInfo* tiVarRef  ; 
 TypeInfo* tiVarFunc ;
 TypeInfo* tiPartApply;
+TypeInfo* tiBind    ;
 TypeInfo* tiTypeInfo;
 TypeInfo* tiVec;
 
@@ -353,55 +355,6 @@ void findCyclesAny(Any)
 {
 }
 
-string indent(string in, uint64_t n)
-{
-   for (int64_t i = in.size() - 2; i >= 0; --i)
-      if (in[i] == '\n')
-         in.insert((uint64_t)i + 1, n, ' ');
-   return in;
-}
-
-template <class C>
-string toTextCont(C* c, int64_t max = INT_MAX)
-{
-   string result("[");
-   vector<string> elemStrs;
-   typename C::iterator b = c->begin();
-   typename C::iterator e = c->end();
-   size_t len = 2;
-   for (typename C::iterator i = b; i != e;)
-   {
-      string elemStr(toTextAux(*i, max - (int64_t)len));
-      if (cycles.count(&*i))
-         elemStr = string("#") + cycles[&*i] + "=" + elemStr;
-      ++i;
-      if (i != e) elemStr += ",";
-      elemStrs.push_back(elemStr);
-      len += elemStr.size();
-   }
-   size_t count = elemStrs.size();
-   if (len > max)
-   {
-      for (size_t i = 0; i < count;)
-      {
-         result += indent(elemStrs[i], 1);
-         ++i;
-         if (i < count) result += "\n";
-      }
-   }
-   else
-   {
-      for (size_t i = 0; i < count;)
-      {
-         result += elemStrs[i];
-         ++i;
-         if (i < count) result += " ";
-      }
-   }                    
-   result += "]";
-   return result;
-}
-
 string toTextInt(int64_t n, int64_t max)
 {
    return TS+n;
@@ -485,6 +438,13 @@ string toTextLambda(List::Closure* l, int64_t max)
    return result;
 }
 
+string indent(string in, uint64_t n)
+{
+   for (int64_t i = in.size() - 2; i >= 0; --i)
+      if (in[i] == '\n')
+         in.insert((uint64_t)i + 1, n, ' ');
+   return in;
+}
 
 string toTextTypeInfo(TypeInfo* ti, int64_t max)
 {
@@ -671,73 +631,145 @@ string toTextMultimethod(MMBase &mm, int64_t max)
    return TS+"Multimethod("+mm.name+")\n"+toTextAux(types, max)+toTextAux(methods, max);
 }
 
-string toTextAny(Any a, int64_t max)
+string shortPtr(void* ptr)
+{
+   ostringstream o;
+   o << (int64_t*)ptr;
+   return o.str().substr(12, 4);
+}
+#if 1
+string toTextAny3(AnyBase& a, int64_t max)
 {
    ostringstream o;
    if (a.typeInfo->kind == kFunction)
-      o << a.typeInfo->getName() << " = " << *(int64_t**)a.payload;
+   {
+      o << shortPtr(*(void**)a.payload) << "*->" << a.typeInfo->getName();
+   }
    else
    {
-      while (a.prDepth() > 0)
+      if (a.typeInfo->kind == kReference || a.typeInfo->kind == kPointer)
       {
-         o << *(int64_t**)a.payload;
-         switch (a.typeInfo->kind)
-         {
-            case kReference:
-               o << "&";
-               break;
-            case kPointer:
-               o << "*";
-               break;
-         }
-         o << " -> ";
          if (*(void**)a.payload == nullptr)
          {
-            o << "***";
+            o << "nullptr";
             return o.str();
          }
-         if (a.prDepth() == 0) break;
-         a = a.derp();
-      }
-#if 1
-      if (a.prDepth() == 0)
-      {
-      }
-      if (a.prDepth() == 0)
-      {
-         o << a.typeInfo->getName() << " ";
-         o << "{";
-         for (size_t i = 0; i < a.typeInfo->allMembers.size(); ++i)
+         o << shortPtr(*(void**)a.payload);
+         //o << shortPtr(payload);
+         switch (a.typeInfo->kind)
          {
+         case kReference: o << "&"; break;
+         case kPointer  : o << "*"; break;
+         }
+         AnyBase b = a.derp();
+         o << "->" << toTextAny3(b, max);
+      }
+      else if (a.typeInfo == tiAny)
+      {
+         //o << shortPtr(*(void**)payload);
+         AnyBase b = a.deany();
+         o << shortPtr(b.payload);
+         o << ":Any->" << toTextAny3(b, max);
+      }
+      else
+      {
+         Any& b(static_cast<Any&>(a));
+         o << b.typeInfo->getName();
+         o << "{ ";
+         for (size_t i = 0; i < b.typeInfo->allMembers.size(); ++i)
+         {
+            Member* m = b.typeInfo->allMembers[i];
             if (i > 0) o << ", ";
-            o << a.typeInfo->allMembers[i]->symbol->name << "=";
+            string name = m->symbol->name;
+            if (name == "linear")
+               __debugbreak();
+            o << name << "=";
             //Any v(a.typeInfo->of->members[i]->ptrToMember(a));
             //Any v(a[i]);
             //v = v.derp();
             //v.showhex();
-            o << toTextAux(a.getMemberRef(i), max);
+            o << toTextAux(b.getMember(m), max);
             //vars.push_back(Var(a.typeInfo->members[i]->name, a.typeInfo->members[i]->ptrToMember(a)));
          }
-         o << "}";
+         o << " }";
       }
-#else
-      Vec vars;
-      TypeInfo* ti = a.typeInfo;
-      vars.push_back(ti->name);
-      for (size_t l = 0; l < ti->linear.size(); ++l)
-      {
-         TypeInfo* lti = ti->linear[l]->base;
-         for (size_t i = 0; i < lti->args.size(); ++i)
-         {
-            Any val(lti->args[i]->ptrToMember(a));
-            vars.push_back(Var(lti->args[i]->symbol->name, val));
-         }
-      }
-      return toText(vars);
-#endif
    }
    return o.str();
 }
+#endif
+string toTextAny2(TypeInfo* typeInfo, void* payload, int64_t max)
+{
+   ostringstream o;
+   if (typeInfo->kind == kFunction)
+   {
+      o << shortPtr(*(void**)payload) << "*->" << typeInfo->getName();
+   }
+   else
+   {
+      if (typeInfo->kind == kReference || typeInfo->kind == kPointer)
+      {
+         if (*(void**)payload == nullptr)
+         {
+            o << "nullptr";
+            return o.str();
+         }
+         o << shortPtr(*(void**)payload);
+         //o << shortPtr(payload);
+         switch (typeInfo->kind)
+         {
+         case kReference: o << "&"; break;
+         case kPointer  : o << "*"; break;
+         }
+         o << "->" << toTextAny2(typeInfo->of, *(void**)payload, max);
+      }
+      else if (typeInfo == tiAny)
+      {
+         //o << shortPtr(*(void**)payload);
+         Any* a = (Any*)payload;
+         o << shortPtr(a->payload);
+         o << ":Any->" << toTextAny2(a->typeInfo, a->payload, max);
+      }
+      else
+      {
+         Any a(typeInfo, payload);
+         o << a.typeInfo->getName();
+         o << "{ ";
+         for (size_t i = 0; i < a.typeInfo->allMembers.size(); ++i)
+         {
+            if (i > 0) o << ", ";
+            string name = a.typeInfo->allMembers[i]->symbol->name;
+            if (name == "linear")
+               __debugbreak();
+            o << name << "=";
+            //Any v(a.typeInfo->of->members[i]->ptrToMember(a));
+            //Any v(a[i]);
+            //v = v.derp();
+            //v.showhex();
+            o << toTextAux(a.getMemberRef(i).derp(), max);
+            //vars.push_back(Var(a.typeInfo->members[i]->name, a.typeInfo->members[i]->ptrToMember(a)));
+         }
+         o << " }";
+      }
+   }
+   return o.str();
+}
+
+string toTextAny1(const Any& a, int64_t max)
+{
+   Any& b = const_cast<Any&>(a);
+   return toTextAny2(b.typeInfo, b.payload, max);
+}
+
+string toTextAny(Any a, int64_t max)
+{
+#if 1
+   //AnyBase& b = (AnyBase&)(a);
+   return toTextAny3(a, max);
+#else
+   return toTextAny2(a.typeInfo, a.payload, max);
+#endif
+}
+
 void insertElemVec(Vec* vec, VecI at, Any val)
 {
    vec->insert(*at, val);
@@ -745,13 +777,13 @@ void insertElemVec(Vec* vec, VecI at, Any val)
 
 template <class C> void                    tinsertElemIX  (C* col, typename C::iterator i, typename C::value_type elem) { col->insert(i, elem);                }
 template <class C> void                    teraseElemIX   (C* col, typename C::iterator i                             ) { col->erase (i      );                }
-template <class C> void                    tinsertElemIntX(C* col, int64_t n, typename C::value_type elem                 ) { col->insert(col->begin() + n, elem); }
-template <class C> void                    teraseElemIntX (C* col, int64_t n                                              ) { col->erase (col->begin() + n      ); }
+template <class C> void                    tinsertElemIntX(C* col, int64_t n, typename C::value_type elem             ) { col->insert(col->begin() + n, elem); }
+template <class C> void                    teraseElemIntX (C* col, int64_t n                                          ) { col->erase (col->begin() + n      ); }
 template <class C> void                    tinsertRangeIX (C* col, typename C::iterator d, Any s0, Any s1             ) { col->insert(d, s0, s1);              }
 template <class C> void                    teraseRangeIX  (C* col, typename C::iterator i0, typename C::iterator i1   ) { col->erase (i0, i1);                 }
-template <class C> void                    tsetElemX      (C* col, int64_t n, typename C::value_type elem                 ) { (*col)[n] = elem;                    }
-template <class C> typename C::value_type& tgetElem       (C* col, int64_t n                                              ) { return (*col)[n];                    }
-template <class C> typename C::value_type  tgetElem1      (C* col, int64_t n                                              ) { return (*col)[n];                    }
+template <class C> void                    tsetElemX      (C* col, int64_t n, typename C::value_type elem             ) { (*col)[n] = elem;                    }
+template <class C> typename C::value_type& tgetElem       (C* col, int64_t n                                          ) { return (*col)[n];                    }
+template <class C> typename C::value_type  tgetElem1      (C* col, int64_t n                                          ) { return (*col)[n];                    }
 template <class C> typename C::iterator    titerBegin     (C* col                                                     ) { return col->begin();                 }
 template <class C> typename C::iterator    titerEnd       (C* col                                                     ) { return col->end();                   }
 template <class C> C*                      tpushFrontX    (C* col, typename C::value_type elem                        ) { col->insert(col->begin(), elem); return col; }
@@ -774,7 +806,87 @@ template <class I> bool                    iequal         (I i, I j             
 template <class I> bool                    inotEqual      (I i, I j                                                   ) { return i != j;                       }
 
 template <class C>
-TypeInfo* addContainer(bool textOps = true)
+string toTextCont(C* c, int64_t max = INT_MAX)
+{
+   string result("[");
+   vector<string> elemStrs;
+   typename C::iterator b = c->begin();
+   typename C::iterator e = c->end();
+   size_t len = 2;
+   for (typename C::iterator i = b; i != e;)
+   {
+      string elemStr(toTextAux(*i, max));
+      if (cycles.count(&*i))
+         elemStr = string("#") + cycles[&*i] + "=" + elemStr;
+      ++i;
+      if (i != e) elemStr += ",";
+      elemStrs.push_back(elemStr);
+      len += elemStr.size();
+   }
+   size_t count = elemStrs.size();
+   if (len > max)
+   {
+      for (size_t i = 0; i < count;)
+      {
+         result += indent(elemStrs[i], 1);
+         ++i;
+         if (i < count) result += "\n";
+      }
+   }
+   else
+   {
+      for (size_t i = 0; i < count;)
+      {
+         result += elemStrs[i];
+         ++i;
+         if (i < count) result += " ";
+      }
+   }                    
+   result += "]";
+   return result;
+}
+
+template <class C>
+string toTextCont1(C* c, int64_t max = INT_MAX)
+{
+   string result("[");
+   vector<string> elemStrs;
+   typename C::iterator b = c->begin();
+   typename C::iterator e = c->end();
+   size_t len = 2;
+   for (typename C::iterator i = b; i != e;)
+   {
+      string elemStr(toTextAux(tderef1(i), max));
+      ++i;
+      if (i != e) elemStr += ",";
+      elemStrs.push_back(elemStr);
+      len += elemStr.size();
+   }
+   size_t count = elemStrs.size();
+   if (len > max)
+   {
+      for (size_t i = 0; i < count;)
+      {
+         result += indent(elemStrs[i], 1);
+         ++i;
+         if (i < count) result += "\n";
+      }
+   }
+   else
+   {
+      for (size_t i = 0; i < count;)
+      {
+         result += elemStrs[i];
+         ++i;
+         if (i < count) result += " ";
+      }
+   }                    
+   result += "]";
+   return result;
+}
+
+template <class C>
+TypeInfo* addContainer()
 {
    typedef typename C::iterator I;
    massign     .add(tassign        <C>);
@@ -788,13 +900,8 @@ TypeInfo* addContainer(bool textOps = true)
    mdec        .add(idec     <I>);
    mequal      .add(iequal   <I>);
    mnotEqual   .add(inotEqual<I>);
-   if (textOps)
-   {
-      toTextAux   .add(toTextCont<C>);
-   }
-   mtoVec      .add(ttoVec  <C>);
 
-   findCycles  .add(findCyclesCont<C>);
+   mtoVec      .add(ttoVec  <C>);
 
    return getTypeAdd<C>();
 
@@ -805,10 +912,10 @@ TypeInfo* addContainer(bool textOps = true)
 }
 
 template <class C>
-TypeInfo* addContainerVD(bool textOps = true)
+TypeInfo* addContainerVD()
 {
    typedef typename C::iterator I;
-   addContainer<C>(textOps);
+   addContainer<C>();
    getElem     .add(tgetElem       <C>);
    insertElemX .add(tinsertElemIX  <C>);
    insertElemX .add(tinsertElemIntX<C>);
@@ -819,16 +926,36 @@ TypeInfo* addContainerVD(bool textOps = true)
    append      .add(tappend        <C>);
    mmap        .add(tmap           <C>);
    mfromVec    .add(tfromVec       <C>);
+   findCycles  .add(findCyclesCont<C>);
    return getTypeAdd<C>();
 }
 
 template <class C>
-TypeInfo* addContainerNR(bool textOps = true)
+TypeInfo* addContainerVD1()
 {
    typedef typename C::iterator I;
-   addContainer<C>(textOps);
+   addContainerVD<C>();
+   toTextAux   .add(toTextCont<C>);
+   return getTypeAdd<C>();
+}
+
+template <class C>
+TypeInfo* addContainerVD2()
+{
+   typedef typename C::iterator I;
+   addContainerVD<C>();
+   toTextAux   .add(toTextCont1<C>);
+   return getTypeAdd<C>();
+}
+
+template <class C>
+TypeInfo* addContainerNR()
+{
+   typedef typename C::iterator I;
+   addContainer<C>();
    getElem     .add(tgetElem1      <C>);
    mderef      .add(tderef1        <I>);
+   toTextAux   .add(toTextCont1<C>);
    return getTypeAdd<C>();
 }
 
@@ -1079,30 +1206,33 @@ void setup()
    globalFrame->context = nullptr;
    globalFrame->visible = false;
 
-   Struct::globalFrame.typeInfo = typeInfoInterp("globalFrameType");
+   Struct::globalFrame.typeInfo = newTypeInterp("globalFrameType");
 
-   tiAny         = addGlobal("Any"        , getTypeAdd<Any       >());
-   tiPH          = addGlobal("PH"         , getTypeAdd<PH        >());
-   tiParseEnd    = addGlobal("ParseEnd"   , getTypeAdd<ParseEnd  >());
-   tiDouble      = addGlobal("double"     , getTypeAdd<double    >());
-   tiFloat       = addGlobal("float"      , getTypeAdd<float     >());
-   tiInt64       = addGlobal("int64"      , getTypeAdd<int64_t   >());
-   tiInt32       = addGlobal("int32"      , getTypeAdd<int32_t   >());
-   tiInt16       = addGlobal("int16"      , getTypeAdd<int16_t   >());
-   tiInt8        = addGlobal("int8"       , getTypeAdd<int8_t    >());
-   tiUInt64      = addGlobal("uint64"     , getTypeAdd<uint64_t  >());
-   tiUInt32      = addGlobal("uint32"     , getTypeAdd<uint32_t  >());
-   tiUInt16      = addGlobal("uint16"     , getTypeAdd<uint16_t  >());
-   tiUInt8       = addGlobal("uint8"      , getTypeAdd<uint8_t   >());
-   tiChar        = addGlobal("char"       , getTypeAdd<char      >());
-   tiSymbol      = addGlobal("symbol"     , getTypeAdd<Symbol   *>());
-   tiCons        = addGlobal("Cons"       , getTypeAdd<Cons     *>());
-   tiListClosure = addGlobal("ListClosure", getTypeAdd<List::Closure*>());
-   tiString      = addGlobal("string"     , getTypeAdd<string    >());
-   tiVarRef      = addGlobal("VarRef"     , getTypeAdd<VarRef   *>());
-   tiVarFunc     = addGlobal("VarFunc"    , getTypeAdd<VarFunc   >());
-   tiPartApply   = addGlobal("PartApply"  , getTypeAdd<PartApply*>());
-   tiTypeInfo    = addGlobal("TypeInfo "  , getTypeAdd<TypeInfo *>());
+   tiAny           = addGlobal("Any"          , getTypeAdd<Any             >());
+   tiPH            = addGlobal("PH"           , getTypeAdd<PH              >());
+   tiMissingArg    = addGlobal("MissingArg"   , getTypeAdd<MissingArg      >());
+   tiParseEnd      = addGlobal("ParseEnd"     , getTypeAdd<ParseEnd        >());
+   tiDouble        = addGlobal("double"       , getTypeAdd<double          >());
+   tiFloat         = addGlobal("float"        , getTypeAdd<float           >());
+   tiInt64         = addGlobal("int64"        , getTypeAdd<int64_t         >());
+   tiInt32         = addGlobal("int32"        , getTypeAdd<int32_t         >());
+   tiInt16         = addGlobal("int16"        , getTypeAdd<int16_t         >());
+   tiInt8          = addGlobal("int8"         , getTypeAdd<int8_t          >());
+   tiUInt64        = addGlobal("uint64"       , getTypeAdd<uint64_t        >());
+   tiUInt32        = addGlobal("uint32"       , getTypeAdd<uint32_t        >());
+   tiUInt16        = addGlobal("uint16"       , getTypeAdd<uint16_t        >());
+   tiUInt8         = addGlobal("uint8"        , getTypeAdd<uint8_t         >());
+   tiChar          = addGlobal("char"         , getTypeAdd<char            >());
+   tiSymbol        = addGlobal("symbol"       , getTypeAdd<Symbol         *>());
+   tiCons          = addGlobal("Cons"         , getTypeAdd<Cons           *>());
+   tiListClosure   = addGlobal("ListClosure"  , getTypeAdd<List::Closure  *>());
+   tiStructClosure = addGlobal("StructClosure", getTypeAdd<Struct::Closure*>());
+   tiString        = addGlobal("string"       , getTypeAdd<string          >());
+   tiVarRef        = addGlobal("VarRef"       , getTypeAdd<VarRef         *>());
+   tiVarFunc       = addGlobal("VarFunc"      , getTypeAdd<VarFunc         >());
+   tiPartApply     = addGlobal("PartApply"    , getTypeAdd<PartApply      *>());
+   tiBind          = addGlobal("Bind"         , getTypeAdd<Bind           *>());
+   tiTypeInfo      = addGlobal("TypeInfo"     , getTypeAdd<TypeInfo       *>());
    tiInt  = tiInt64;
    tiUInt = tiUInt64;
 
@@ -1131,6 +1261,30 @@ void setup()
    addMember(&TypeInfo::number     , "number");
    addMember(&TypeInfo::of         , "of");
    addMember(&TypeInfo::size       , "size");
+
+   addMember(&PH      ::n          , "n");
+
+   addMember(&VarFunc ::func       , "func");
+
+   addMember(&PartApply::fixed     , "fixed");
+   addMember(&PartApply::args      , "args");
+
+   addMember(&Bind     ::params    , "params");
+
+   addMember(&MMBase   ::name      , "name");
+
+   addMember(&Struct::Stack::frame , "frame");
+   addMember(&Struct::Stack::parent, "parent");
+
+   addMember(&Identifier::member   , "member");
+   addMember(&Identifier::frameN   , "frameN");
+
+   addMember(&Member::symbol       , "symbol");
+
+   addMember(&Symbol::name         , "name");
+
+   addMember(&Compose::f           , "f");
+   addMember(&Compose::g           , "g");
 
    tiNumber   = new TypeInfo("number");
    tiInteger  = new TypeInfo("integer");
@@ -1168,6 +1322,7 @@ void setup()
    addTypeLinkConv(tiInt32 , tiUInt32);
    addTypeLinkConv(tiInt16 , tiUInt16);
    addTypeLinkConv(tiInt8  , tiUInt8 );
+   addTypeLinkConv(tiInt8  , tiChar  );
 
    tiUInt8->doC3Lin(&TypeInfo::conv);
 
@@ -1302,27 +1457,30 @@ void setup()
    toTextAux.add(toTextChar);
    toTextAux.add(toTextString);
    toTextAux.add(toTextLambda);
-   toTextAux.add(toTextTypeInfo);
+   //toTextAux.add(toTextTypeInfo);
    toTextAux.add(toTextFrame);
    toTextAux.add(toTextArray);
-   toTextAux.add(toTextMultimethod);
+   //toTextAux.add(toTextMultimethod);
    toTextAux.add(toTextVar);
 
    pushBack .add(pushBackCons);
    mequal   .add(equalSymbol);
    mnotEqual.add(notEqualSymbol);
 
-           addContainerVD<vector     <int64_t>>()->setName("vector<int64_t>");
-   tiVec = addContainerVD<vector     <Any    >>()->setName("vector<Any>");
-           addContainerVD<deque      <int64_t>>()->setName("deque<int64_t>");
-           addContainerVD<deque      <Var    >>()->setName("deque<Var>");
-           addContainerVD<string              >(false)->setName("string");
-           addContainerVD<vector     <Expr*  >>()->setName("vector<Expr*>");
-           addContainerNR<NumberRange<int64_t>>()->setName("NumberRange<int>");
+           addContainerVD1<vector     <int64_t>>()->setName("vector<int64_t>" );
+   tiVec = addContainerVD1<vector     <Any    >>()->setName("vector<Any>"     );
+           addContainerVD1<vector     <Expr*  >>()->setName("vector<Expr*>"   );
+           addContainerVD1<deque      <int64_t>>()->setName("deque<int64_t>"  );
+           addContainerVD1<deque      <Var    >>()->setName("deque<Var>"      );
+           addContainerVD2<string              >()->setName("string"          );
+           addContainerNR <vector     <bool   >>()->setName("vector<bool>"    );
+           addContainerNR <NumberRange<int64_t>>()->setName("NumberRange<Int>");
 
    addList();
    madd.useConversions = true;
    madd.useTable = true;
+   mmultiply.useConversions = true;
+   mmultiply.useTable = true;
    addMathOps< double>();
    addMathOps<  float>();
    addMathOps<int8_t>();
@@ -1404,8 +1562,9 @@ void setup()
    for (auto p : typeMap) p.second->doC3Lin(&TypeInfo::conv);
    for (auto p : typeMap) p.second->allocate();
 #endif
-   madd.buildTable();
    convert.buildTable();
+   //for (auto p : MMBase::mms)
+   //   p->buildTable();
 }
 
 /*

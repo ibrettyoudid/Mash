@@ -34,7 +34,7 @@ void destructInterp(void *ptr, TypeInfo* typeInfo)
          m->typeInfo->destruct((char*)ptr + m->offset, m->typeInfo);
 }
 
-TypeInfo* typeInfoInterp(std::string name)
+TypeInfo* newTypeInterp(std::string name)
 {
    TypeInfo* typeInfo = new TypeInfo;
    typeInfo->cpp = false;
@@ -198,9 +198,9 @@ void MemberList::clear()
    byOffset.clear();
 }
 
-Any::Any() : typeInfo(nullptr), payload(nullptr)
+Any::Any()
 {
-   //construct(0);
+   payload = nullptr;
 }
 
 Any::Any(const Any& rhs)
@@ -213,13 +213,14 @@ Any::Any(const Any& rhs)
    }
    else
    {
-      typeInfo = nullptr;
-      payload  = nullptr;
+      payload = nullptr;
    }
 }
 
-Any::Any(Any&& rhs) : typeInfo(rhs.typeInfo), payload(rhs.payload)
+Any::Any(Any&& rhs)
 {
+   typeInfo = rhs.typeInfo;
+   payload = rhs.payload;
    rhs.payload = nullptr;
 }  
 
@@ -248,8 +249,9 @@ Any& Any::operator=(Any&& rhs)
    return *this;
 }
 
-Any::Any(TypeInfo* typeInfo, void* rhs) : typeInfo(typeInfo)
+Any::Any(TypeInfo* ti, void* rhs)
 {
+   typeInfo = ti;
    payload = new char[typeInfo->size];//creates a copy on construction
    typeInfo->copyCon(payload, rhs, typeInfo);
 }
@@ -267,55 +269,180 @@ bool Any::empty()
 }
 Any Any::call(Any* args, int64_t n)
 {
-   return typeInfo->delegPtr(this, args, n);
+   if (typeInfo->delegPtr)
+   {
+      return typeInfo->delegPtr(this, args, n);
+   }
+   else if (typeInfo->kind == kReference || typeInfo->kind == kPointer)
+      return derp().call(args, n);
+   else if (typeInfo == tiAny)
+      return deany().call(args, n);
 }
 Any Any::operator()()
 {
-   return typeInfo->delegPtr(this, nullptr, 0);
+   return call(nullptr, 0);
 }
 Any Any::operator()(Any arg0)
 {
-   return typeInfo->delegPtr(this, &arg0, 1);
+   Any args[1] = { arg0 };
+   return call(args, 1);
 }
 Any Any::operator()(Any arg0, Any arg1)
 {
    Any args[2] = { arg0, arg1 };
-   return typeInfo->delegPtr(this, args, 2);
+   return call(args, 2);
 }
 Any Any::operator()(Any arg0, Any arg1, Any arg2)
 {
    Any args[3] = { arg0, arg1, arg2 };
-   return typeInfo->delegPtr(this, args, 3);
+   return call(args, 3);
 }
 Any Any::operator()(Any arg0, Any arg1, Any arg2, Any arg3)
 {
    Any args[4] = { arg0, arg1, arg2, arg3 };
-   return typeInfo->delegPtr(this, args, 4);
+   return call(args, 4);
 }
 Any Any::operator()(Any arg0, Any arg1, Any arg2, Any arg3, Any arg4)
 {
    Any args[5] = { arg0, arg1, arg2, arg3, arg4 };
-   return typeInfo->delegPtr(this, args, 5);
+   return call(args, 5);
 }
 //--------------------------------------------------------------------------- CONVERSION
+//remove one level of indirection
+//convert an (any containing ptr/ref to T) to an (any containing T)
+//changes the address of the T
+AnyBase::AnyBase(TypeInfo* typeInfo, void* payload) : typeInfo(typeInfo), payload(payload)
+{
+}
+
+bool AnyBase::canderp()
+{
+   return typeInfo->kind == kReference || typeInfo->kind == kPointer;
+}
+AnyBase AnyBase::derp()
+{
+   if (canderp())
+      return AnyBase(typeInfo->of, *(void**)payload);
+   else
+      throw "not a reference or pointer!";
+}
+
 Any Any::derp()
 {
-   return Any(typeInfo->of, *(void**)payload);
+   if (canderp())
+      return Any(typeInfo->of, *(void**)payload);
+   else
+      throw "not a reference or pointer!";
 }
-Any Any::deany()//denest a nested any
+
+//convert an (any containing any containing T) to an (any containing T)
+//could alternatively use move assignment?
+bool AnyBase::candeany()
 {
-   if (typeInfo == tiAny)
-      return Any(((Any*)payload)->typeInfo, ((Any*)payload)->payload);
+   return typeInfo == tiAny;
+}
+AnyBase AnyBase::deany()
+{
+   if (candeany())
+   {
+      Any* a = (Any*)payload;
+      return AnyBase(a->typeInfo, a->payload);
+   }
    else
       throw "not an Any!";
 }
-Any Any::ptrTo()
+Any Any::deany()//denest a nested any
 {
+   if (candeany())
+   {
+      Any* a = (Any*)payload;
+      return Any(a->typeInfo, a->payload);
+   }
+   else
+      throw "not an Any!";
+}
+
+//would this work? if it makes a copy of this then yes. if it makes a move that will cause problems as well as if it does nothing
+Any* Any::deany1()//denest a nested any, we already lost the original address with derp()
+{
+   if (candeany())
+      return (Any*)payload;
+   else
+      throw "not an Any!";
+}
+//an Any CONTAINS its payload, a pointer just points to its pointee
+//each new Any creates a copy, which it owns
+
+//convert an (any containing pointer/ref to any containing T) to a (pointer to any containing T or 2->3->4  ) 
+//can call toRef on the result to get a (any containing ref to T) so 1->2->3->4 is now 1->2->4
+//can call toPtr on the result to get a (any containing ptr to T)
+//deany2()->typeInfo == T
+//can do deany2()->toPtr()->deany2() etc. if there are more layers? yes think so. best to do it this way because you can check first
+//can do deany2()->deanyptr() etc. if there are more layers? no
+bool Any::candeany2()
+{
+   return (typeInfo->kind == kReference || typeInfo->kind == kPointer) && typeInfo->of == tiAny;
+}
+Any* Any::deany2()
+{
+   return *(Any**)payload;
+}
+/*
+Any Any::anyrefderpany()
+{
+   if ((typeInfo->kind == kReference || typeInfo->kind == kPointer) && typeInfo->of == tiAny)
+   {
+      Any* address = *(Any**)payload;
+      return address->toRef();
+   }
+   throw "cant";
+}
+*/
+//convert an (any containing T) to an (any containing ref to T) the address of T doesn't change
+Any Any::toRef()
+{
+   if (!typeInfo->ref)
+   {
+      typeInfo->ref = new TypeInfo(*getTypeAdd<void*>());
+      typeInfo->ref->kind  = kReference;
+      typeInfo->ref->cType = nullptr;
+      typeInfo->ref->cpp   = false;
+      typeInfo->ref->name  = typeInfo->name + "&";
+      typeInfo->ref->of    = typeInfo;
+   }
+   return Any(typeInfo->ref, &payload);
+}
+//convert an (any containing T) to an (any containing ptr to T) the address of T doesn't change
+Any Any::toPtr()
+{
+   if (!typeInfo->ptr)
+   {
+      if (typeInfo->kind == kReference)
+      {
+         //asked to create a pointer to a reference, create a reference to a pointer instead
+         if (typeInfo->of->ptr && typeInfo->of->ptr->ref)
+         {
+            typeInfo->ptr = typeInfo->of->ptr->ref;
+         }
+         else
+            throw "give up";
+      }
+      else
+      {
+         TypeInfo* newType = new TypeInfo(*getTypeAdd<void*>());
+         newType->cType = nullptr;
+         newType->cpp   = false;
+         newType->name  = typeInfo->name + "*";
+         newType->of    = typeInfo;
+         typeInfo->ptr  = newType;
+      }
+   }
    return Any(typeInfo->ptr, &payload);
 }
-Any Any::refTo()
+//convert an (any containing T) to an (any containing any containing T) the address of T changes
+Any Any::toAny()
 {
-   return Any(typeInfo->ref, &payload);
+   return Any(tiAny, this);
 }
 Any::operator MMBase& ()
 {
@@ -328,12 +455,6 @@ Any::operator MMBase& ()
 std::string Any::typeName()
 {
    return typeInfo->getName();
-   if (typeInfo->name.substr(0, 7) == "struct ")
-      return typeInfo->name.substr(7);
-   else if (typeInfo->name.substr(0, 6) == "class ")
-      return typeInfo->name.substr(6);
-   else
-      return typeInfo->name;
 }
 TypeInfo* Any::paramType(int64_t n, bool useReturnT)
 {
@@ -364,9 +485,22 @@ int64_t Any::maxArgs()
    else if (typeInfo == tiVarFunc)
       return as<VarFunc>().maxArgs;
    else if (typeInfo->multimethod)
-      return ((MMBase&)*this).minArgs;
+      return ((MMBase&)*this).maxArgs;
    else if (typeInfo->kind == kFunction)
       return typeInfo->members.size();
+   else if (typeInfo == tiPartApply)
+      return LLONG_MAX;
+   else if (typeInfo == tiBind)
+      return LLONG_MAX;
+   else if (typeInfo == tiStructClosure)
+   {
+      Struct::Closure* cl = *this;
+      return cl->lambda->type->allMembers.size();
+   }
+   else if (canderp())
+      return derp().maxArgs();
+   else if (candeany())
+      return deany().maxArgs();
    else
    {
       cout << "maxArgs called for non-function" << endl;
@@ -385,6 +519,35 @@ int64_t Any::minArgs()
       return ((MMBase&)*this).minArgs;
    else if (typeInfo->kind == kFunction)
       return typeInfo->members.size();
+   else if (typeInfo == tiPartApply)
+   {
+      PartApply* pa = *this;
+      return pa->args[0].minArgs() - pa->args.size() + 1;
+   }
+   else if (typeInfo == tiBind)
+   {
+      Bind* bi = *this;
+      int64_t max = 0;
+      for (Any& p : bi->params)
+      {
+         if (p.typeInfo == tiPH)
+         {
+            PH ph = p.as<PH>();
+            if (ph.n > max)
+               max = ph.n;
+         }
+      }
+      return max;
+   }
+   else if (typeInfo == tiStructClosure)
+   {
+      Struct::Closure* cl = *this;
+      return cl->lambda->type->allMembers.size();
+   }
+   else if (canderp())
+      return derp().minArgs();
+   else if (candeany())
+      return deany().minArgs();
    else
    {
       cout << "minArgs called for non-function" << endl;
@@ -499,8 +662,13 @@ Any Any::getMember(Member* m)
 {
    if (m->one)
       return m->value;
-   else
+   else if (typeInfo->cpp)
       return (*m->getMember)(m, *this);
+   else
+   {
+      void *addr = getMemberAddress(m);
+      return Any(m->typeInfo, addr);
+   }
 }
 
 Any Any::getMemberRef(Member* m)
@@ -518,7 +686,7 @@ Any Any::getMemberRef(Member* m)
    return Any(tiNew, reinterpret_cast<void*>(&ptrNew));
 #else
    if (m->one)
-      return m->value;
+      return m->value.toRef();
    else if (typeInfo->cpp)
       return (*m->getMemberRef)(m, *this);
    else
@@ -532,17 +700,27 @@ Any Any::getMemberRef(Member* m)
 Any Any::getMemberPtr(Member* m)
 {
    if (m->one)
-      return m->value;
-   else
+      return m->value.toPtr();
+   else if (typeInfo->cpp)
       return (*m->getMember)(m, *this);
+   else
+   {
+      void *addr = getMemberAddress(m);
+      return Any(m->typeInfo->ptr, &addr);
+   }
 }
 
 void Any::setMember(Member* m, Any value)
 {
    if (m->one)
       m->value = value;
-   else
+   else if (typeInfo->cpp)
       (*m->setMember)(m, *this, value);
+   else
+   {
+      void *addr = getMemberAddress(m);
+      throw "not implemented yet!";
+   }
 }
 
 Any Any::getMemberRef(Symbol* symbol)
@@ -793,15 +971,15 @@ bool canCast(TypeInfo* toType, TypeInfo* fromType)
       //std::cout << o.str() << std::endl;
       return false;
    }
-   int64_t indirs = fromRL + fromPL - toPL;
-   if (indirs < -1)
+   int64_t indirs = toPL - fromRL - fromPL;
+   if (indirs > 1)
    {
       //std::ostringstream o;
       //o << "cannot add more than 1 indirection: attempt to cast from " << fromType1->getName() << " to " << toType1->getName();
       //std::cout << o.str() << std::endl;
       return false;
    }
-   if (indirs > 3)
+   if (indirs < -3)
    {
       //std::ostringstream o;
       //o << "cannot remove more than 3 indirections: attempt to cast from " << fromType1->getName() << " to " << toType1->getName();
@@ -837,7 +1015,7 @@ TypeInfo* TypeInfo::unptr(int64_t n)
    else if (kind == kPointer && n > 0) return of->unptr(n-1);
    else return this;
 }
-TypeInfo* TypeInfo::refTo()
+TypeInfo* TypeInfo::toRef()
 {
    if (this == nullptr) return nullptr;
    if (kind == kReference) return of; else return nullptr;
@@ -928,7 +1106,12 @@ std::string TypeInfo::getName()
    switch (kind)
    {
    case kNormal:
-      o << this->name;
+      if (name.substr(0, 7) == "struct ")
+         o << name.substr(7);
+      else if (name.substr(0, 6) == "class ")
+         o << name.substr(6);
+      else
+         o << name;
       break;
    case kReference:
       o << "& " << of->getName();
@@ -943,7 +1126,7 @@ std::string TypeInfo::getName()
       o << "[" << count << "] " << of->getName();
       break;
    case kFunction:
-      o << "*function(";
+      o << "function(";
       for (size_t i = 0; i < members.byOffset.size(); ++i)
       {
          auto a = members.byOffset[i];
@@ -952,7 +1135,7 @@ std::string TypeInfo::getName()
          if (a->symbol)
             o << " " << a->symbol->name;
       }
-      o << ") -> " << of->getName();
+      o << ")->" << of->getName();
       break;
    }
    return o.str();
@@ -990,14 +1173,14 @@ MissingArg _;
 Any delegPartApply(Any* cl, Any* argsVar, int64_t n)
 {
    PartApply* pa = *cl;
-   size_t nArgsAll = pa->argsFixed.size() + n;
+   size_t nArgsAll = pa->args.size() + n;
    Any* argsAll = new Any[nArgsAll];
    size_t afi = 0;
    size_t avi = 0;
    for (size_t aai = 0; aai < nArgsAll; ++aai)
    {
-      if (pa->pArgsFixed >> aai & 1LL)
-         argsAll[aai] = pa->argsFixed[afi++];
+      if (aai < pa->fixed.size() && pa->fixed[aai])
+         argsAll[aai] = pa->args[afi++];
       else
          argsAll[aai] = argsVar[avi++];
    }
@@ -1011,53 +1194,53 @@ Any delegPartApply(Any* cl, Any* argsVar, int64_t n)
 PartApply* partApply(MissingArg, Any a0)
 {
    PartApply* res = new PartApply;
-   res->pArgsFixed = 2;
-   res->argsFixed.push_back(a0);
+   res->fixed = { 0, 1 };
+   res->args.push_back(a0);
    return res;
 }
 
 PartApply* partApply(Any fn, Any a0)
 {
    PartApply* res = new PartApply;
-   res->pArgsFixed = 3;//binary - means members 0 and 1 are fixed
-   res->argsFixed.push_back(fn);
-   res->argsFixed.push_back(a0);
+   res->fixed = { 1, 1 };//binary - means members 0 and 1 are fixed
+   res->args.push_back(fn);
+   res->args.push_back(a0);
    return res;
 }
 
 PartApply* partApply(MissingArg, MissingArg, Any a1)
 {
    PartApply* res = new PartApply;
-   res->pArgsFixed = 4;
-   res->argsFixed.push_back(a1);
+   res->fixed = { 0, 0, 1 };
+   res->args.push_back(a1);
    return res;
 }
 
 PartApply* partApply(Any fn, MissingArg, Any a1)
 {
    PartApply* res = new PartApply;
-   res->pArgsFixed = 5;
-   res->argsFixed.push_back(fn);
-   res->argsFixed.push_back(a1);
+   res->fixed = { 1, 0, 1 };
+   res->args.push_back(fn);
+   res->args.push_back(a1);
    return res;
 }
 
 PartApply* partApply(MissingArg, Any a0, Any a1)
 {
    PartApply* res = new PartApply;
-   res->pArgsFixed = 6;//binary - means members 0, 1 & 2 are fixed
-   res->argsFixed.push_back(a0);
-   res->argsFixed.push_back(a1);
+   res->fixed = { 0, 1, 1 };//binary - means members 0, 1 & 2 are fixed
+   res->args.push_back(a0);
+   res->args.push_back(a1);
    return res;
 }
 
 PartApply* partApply(Any fn, Any a0, Any a1)
 {
    PartApply* res = new PartApply;
-   res->pArgsFixed = 7;//binary - means members 0, 1 & 2 are fixed
-   res->argsFixed.push_back(fn);
-   res->argsFixed.push_back(a0);
-   res->argsFixed.push_back(a1);
+   res->fixed = { 1, 1, 1 };//binary - means members 0, 1 & 2 are fixed
+   res->args.push_back(fn);
+   res->args.push_back(a0);
+   res->args.push_back(a1);
    return res;
 }
 
@@ -1088,12 +1271,6 @@ Any bind(Any* args, int64_t nargs)
 extern TypeInfo* tiListClosure;
 extern TypeInfo* tiStructClosure;
 extern TypeInfo* tiVarFunc;
-
-template <typename F>
-Any functor(F f)
-{
-   return partApply(&F::operator(), f);
-}
 
 Any delegVF(Any* fp, Any* args, int64_t n)
 {

@@ -51,6 +51,15 @@ struct Test2 : Test, Test1
    }
 };
 
+string getInput(string prompt)
+{
+   cout << prompt;
+   cout.flush();
+   char inputChars[65536];
+   cin.getline(inputChars, 65536);
+   return string(inputChars);
+}
+
 #ifdef __linux__
 int main(int argc, char* argv[])
 #else
@@ -67,10 +76,32 @@ int _tmain(int argc, _TCHAR* argv[])
    cout << g.hex() << endl << endl;
    Any h(&Test2::vfunc);
    cout << h.hex() << endl << endl;
-   cout << typeid(&Test ::vfunc).name() << &Test ::vfunc << endl;
-   cout << typeid(&Test1::vfunc).name() << &Test1::vfunc << endl;
-   cout << typeid(&Test2::vfunc).name() << &Test2::vfunc << endl;
+   cout << typeid(&Test ::vfunc).name() << "=" << & Test::vfunc << endl;
+   cout << typeid(&Test1::vfunc).name() << "=" << & Test1::vfunc << endl;
+   cout << typeid(&Test2::vfunc).name() << "=" << & Test2::vfunc << endl;
    f(t);
+   cout << endl;
+   Any a(39);
+   cout << toTextAny1(a) << endl;
+   Any x(a.toAny());
+   cout << toTextAny1(x) << endl;
+   Any y(x.toAny());
+   cout << toTextAny1(y) << endl;
+   Any z(y.toAny());
+   cout << toTextAny1(z) << endl;
+   cout << toTextAny1(z) << endl;
+   cout << toTextAny1(z) << endl;
+   Any b(z.toPtr());
+   cout << toTextAny1(b) << endl;
+   Any c(b.toPtr());
+   cout << toTextAny1(c) << endl;
+   Any d(c.toRef());
+   cout << toTextAny1(d) << endl;
+   Any e(d.toRef());
+   cout << toTextAny1(e) << endl << endl;
+
+   cout << e.as2<int>() << endl;
+
    parser.lang = &scheme;
    List::InterpL interp;
    Frame* userFrame = new Frame;
@@ -80,16 +111,11 @@ int _tmain(int argc, _TCHAR* argv[])
 
    for (;;)
    {
-      cout << "\033[32mscheme>\033[0m ";
-      cout.flush();
-      char inputChars[1000];
-      cin.getline(inputChars, 1000);
-      string input(inputChars);
       switch (lang)
       {
          case 1:
          {
-            ParseResult* r = parse(expr, input);
+            ParseResult* r = parse(expr, getInput("\033[32mhaskell>\033[0m "));
             if (r)
             {
                Struct::compile(r->ast, Struct::stack);
@@ -101,6 +127,7 @@ int _tmain(int argc, _TCHAR* argv[])
          }
          case 2:
          {
+            string input = getInput("\033[32mscheme>\033[0m ");
             Any expr = parser.setProgram(input)->initUnit()->parseSExpr();//parser.setProgram(user)->initUnit()->parseExpr();
             List::compile(expr, userFrame);
             cout << expr << endl;

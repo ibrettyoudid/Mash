@@ -93,11 +93,27 @@ struct Ref
 {
 };
 
-struct Any
+struct AnyBase
+{
+   void* payload;
+   TypeInfo* typeInfo;
+
+   AnyBase() {}
+   AnyBase(TypeInfo* typeInfo, void* payload);
+
+   bool canderp();
+   AnyBase derp();
+   bool candeany();
+   AnyBase deany();
+};
+
+struct AnyRef : public AnyBase
+{
+};
+
+struct Any : public AnyBase
 {
    typedef std::input_iterator_tag iterator_category;
-   TypeInfo* typeInfo;
-   void* payload;
 
    template <class Type> void construct(Type value);
    Any();
@@ -119,13 +135,20 @@ struct Any
    Any operator()(Any arg0, Any arg1, Any arg2);
    Any operator()(Any arg0, Any arg1, Any arg2, Any arg3);
    Any operator()(Any arg0, Any arg1, Any arg2, Any arg3, Any arg4);
+   //bool canderp();
    Any derp();
+   //bool candeany();
    Any deany();
-   Any ptrTo();
-   Any refTo();
+   Any* deany1();
+   bool candeany2();
+   Any* deany2();
+   Any toRef();
+   Any toPtr();
+   Any toAny();
    //--------------------------------------------------------------------------- CONVERSION
    template <class To>   operator To&();
    template <class To>   To& as();
+   template <class To>   To  as2();
    template <class To>   To* any_cast();
    operator MMBase& ();
    //---------------------------------------------------------------------------------
@@ -250,7 +273,7 @@ struct TypeInfo
    TypeInfo*   argType   (int64_t n, bool useReturnT);
    TypeInfo*   unref     ();
    TypeInfo*   unptr     (int64_t n);
-   TypeInfo*   refTo     ();
+   TypeInfo*   toRef     ();
    bool        isPtrTo   (TypeInfo* other);
    bool        isRefTo   (TypeInfo* other);
    bool        isPRTF    (TypeInfo* other);
@@ -414,7 +437,7 @@ static void destructnothing(void*, TypeInfo*)
 {
 }
 
-TypeInfo* typeInfoInterp(std::string name);
+TypeInfo* newTypeInterp(std::string name);
 
 template <class Type> TypeInfo* getTypeAdd();
 
@@ -817,15 +840,15 @@ To& Any::as()
       std::cout << o.str() << std::endl;
       throw std::runtime_error(o.str());
    }
-   int64_t indirs = fromRL + fromPL - toPL;
-   if (indirs < -1)
+   int64_t indirs = toPL - fromRL - fromPL;
+   if (indirs > 1)
    {
       std::ostringstream o;
       o << "cannot add more than 1 indirection: attempt to cast from " << typeInfo->getName() << " to " << toType1->getName();
       std::cout << o.str() << std::endl;
       throw std::runtime_error(o.str());
    }
-   if (indirs > 3)
+   if (indirs < -3)
    {
       std::ostringstream o;
       o << "cannot remove more than 3 indirections: attempt to cast from " << typeInfo->getName() << " to " << toType1->getName();
@@ -835,19 +858,19 @@ To& Any::as()
    //below, the number of asterisks in the < > must equal the number of dereferences between return and cast (in order for the types to be correct)
    switch (indirs)
    {
-      //case -2:
+      //case 2:
       //   return double_cast<To>(&ptr);
-      case -1:
+      case 1:
          return *double_cast<To*>(&payload);
 
        //in cases below, type in < > is the from type, both To and From may be pointer/pointer-to-pointer/etc. types
       case 0:
          return *static_cast<To*>(payload);
-      case 1:
+      case -1:
          return **static_cast<To**>(payload);
-      case 2:
+      case -2:
          return ***static_cast<To***>(payload);
-      case 3:
+      case -3:
          return ****static_cast<To****>(payload);
    }
    throw "HUH?";
@@ -1100,6 +1123,7 @@ struct getType<void (*)()>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoid0;
       return fti;
    }
@@ -1111,7 +1135,7 @@ Any delegVoid1(Any* fp1, Any* params, int64_t n)
    if (n != 1) throw "wrong number of params";
    void (*fp)(A0) = *fp1;
    fp(params[0]);
-   return Any(0);
+   return Any();
 }
 template <class A0>
 struct getType<void (*)(A0)>
@@ -1128,6 +1152,7 @@ struct getType<void (*)(A0)>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoid1<A0>;
       fti->members.add(new Member(getTypeAdd<A0>()));
       return fti;
@@ -1140,7 +1165,7 @@ Any delegVoid2(Any* fp1, Any* params, int64_t n)
    if (n != 2) throw "wrong number of params";
    void (*fp)(A0, A1) = *fp1;
    fp(params[0], params[1]);
-   return Any(0);
+   return Any();
 }
 template <class A0, class A1>
 struct getType<void (*)(A0,A1)>
@@ -1157,6 +1182,7 @@ struct getType<void (*)(A0,A1)>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoid2<A0, A1>;
       fti->members.add(new Member(getTypeAdd<A0>()));
       fti->members.add(new Member(getTypeAdd<A1>()));
@@ -1170,7 +1196,7 @@ Any delegVoid3(Any* fp1, Any* params, int64_t n)
    if (n != 3) throw "wrong number of params";
    void (*fp)(A0, A1, A2) = *fp1;
    fp(params[0], params[1], params[2]);
-   return Any(0);
+   return Any();
 }
 template <class A0, class A1, class A2>
 struct getType<void (*)(A0,A1,A2)>
@@ -1187,6 +1213,7 @@ struct getType<void (*)(A0,A1,A2)>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoid3<A0, A1, A2>;
       fti->members.add(new Member(getTypeAdd<A0>()));
       fti->members.add(new Member(getTypeAdd<A1>()));
@@ -1201,7 +1228,7 @@ Any delegVoid4(Any* fp1, Any* params, int64_t n)
    if (n != 4) throw "wrong number of params";
    void (*fp)(A0, A1, A2, A3) = *fp1;
    fp(params[0], params[1], params[2], params[3]);
-   return Any(0);
+   return Any();
 }
 template <class A0, class A1, class A2, class A3>
 struct getType<void (*)(A0,A1,A2,A3)>
@@ -1218,6 +1245,7 @@ struct getType<void (*)(A0,A1,A2,A3)>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoid4<A0, A1, A2, A3>;
       fti->members.add(new Member(getTypeAdd<A0>()));
       fti->members.add(new Member(getTypeAdd<A1>()));
@@ -1233,7 +1261,7 @@ Any delegVoid5(Any* fp1, Any* params, int64_t n)
    if (n != 5) throw "wrong number of params";
    void (*fp)(A0, A1, A2, A3, A4) = *fp1;
    fp(params[0], params[1], params[2], params[3], params[4]);
-   return Any(0);
+   return Any();
 }
 template <class A0, class A1, class A2, class A3, class A4>
 struct getType<void (*)(A0,A1,A2,A3,A4)>
@@ -1250,6 +1278,7 @@ struct getType<void (*)(A0,A1,A2,A3,A4)>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoid5<A0, A1, A2, A3, A4>;
       fti->members.add(new Member(getTypeAdd<A0>()));
       fti->members.add(new Member(getTypeAdd<A1>()));
@@ -1451,7 +1480,7 @@ Any delegVoidClass0(Any* fp1, Any* params, int64_t n)
    if (n != 1) throw "wrong number of params";
    void (C::*fp)() = *fp1;
    (params[0].as<C>().*fp)();
-   return Any(0);
+   return Any();
 }
 template <class C>
 struct getType<void (C::*)()>
@@ -1468,6 +1497,7 @@ struct getType<void (C::*)()>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoidClass0<C>;
       fti->members.add(new Member(getTypeAdd<C>()));
       fti->member = true;
@@ -1481,7 +1511,7 @@ Any delegVoidClass1(Any* fp1, Any* params, int64_t n)
    if (n != 2) throw "wrong number of params";
    void (C::*fp)(A0) = *fp1;
    (params[0].as<C>().*fp)(params[1]);
-   return Any(0);
+   return Any();
 }
 template <class C, class A0>
 struct getType<void (C::*)(A0)>
@@ -1498,6 +1528,7 @@ struct getType<void (C::*)(A0)>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoidClass1<C, A0>;
       fti->members.add(new Member(getTypeAdd<C>()));
       fti->members.add(new Member(getTypeAdd<A0>()));
@@ -1512,7 +1543,7 @@ Any delegVoidClass2(Any* fp1, Any* params, int64_t n)
    if (n != 3) throw "wrong number of params";
    void (C::*fp)(A0, A1) = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2]);
-   return Any(0);
+   return Any();
 }
 template <class C, class A0, class A1>
 struct getType<void (C::*)(A0,A1)>
@@ -1529,6 +1560,7 @@ struct getType<void (C::*)(A0,A1)>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoidClass2<C, A0, A1>;
       fti->members.add(new Member(getTypeAdd<C>()));
       fti->members.add(new Member(getTypeAdd<A0>()));
@@ -1544,7 +1576,7 @@ Any delegVoidClass3(Any* fp1, Any* params, int64_t n)
    if (n != 4) throw "wrong number of params";
    void (C::*fp)(A0, A1, A2) = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3]);
-   return Any(0);
+   return Any();
 }
 template <class C, class A0, class A1, class A2>
 struct getType<void (C::*)(A0,A1,A2)>
@@ -1561,6 +1593,7 @@ struct getType<void (C::*)(A0,A1,A2)>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoidClass3<C, A0, A1, A2>;
       fti->members.add(new Member(getTypeAdd<C>()));
       fti->members.add(new Member(getTypeAdd<A0>()));
@@ -1577,7 +1610,7 @@ Any delegVoidClass4(Any* fp1, Any* params, int64_t n)
    if (n != 5) throw "wrong number of params";
    void (C::*fp)(A0, A1, A2, A3) = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4]);
-   return Any(0);
+   return Any();
 }
 template <class C, class A0, class A1, class A2, class A3>
 struct getType<void (C::*)(A0,A1,A2,A3)>
@@ -1594,6 +1627,7 @@ struct getType<void (C::*)(A0,A1,A2,A3)>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoidClass4<C, A0, A1, A2, A3>;
       fti->members.add(new Member(getTypeAdd<C>()));
       fti->members.add(new Member(getTypeAdd<A0>()));
@@ -1611,7 +1645,7 @@ Any delegVoidClass5(Any* fp1, Any* params, int64_t n)
    if (n != 6) throw "wrong number of params";
    void (C::*fp)(A0, A1, A2, A3, A4) = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4], params[5]);
-   return Any(0);
+   return Any();
 }
 template <class C, class A0, class A1, class A2, class A3, class A4>
 struct getType<void (C::*)(A0,A1,A2,A3,A4)>
@@ -1628,6 +1662,7 @@ struct getType<void (C::*)(A0,A1,A2,A3,A4)>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoidClass5<C, A0, A1, A2, A3, A4>;
       fti->members.add(new Member(getTypeAdd<C>()));
       fti->members.add(new Member(getTypeAdd<A0>()));
@@ -1843,7 +1878,7 @@ Any delegVoidConstClass0(Any* fp1, Any* params, int64_t n)
    if (n != 1) throw "wrong number of params";
    void (C::*fp)() const = *fp1;
    (params[0].as<C>().*fp)();
-   return Any(0);
+   return Any();
 }
 template <class C>
 struct getType<void (C::*)() const>
@@ -1860,6 +1895,7 @@ struct getType<void (C::*)() const>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoidConstClass0<C>;
       fti->members.add(new Member(getTypeAdd<const C>()));
       fti->member = true;
@@ -1873,7 +1909,7 @@ Any delegVoidConstClass1(Any* fp1, Any* params, int64_t n)
    if (n != 2) throw "wrong number of params";
    void (C::*fp)(A0) const = *fp1;
    (params[0].as<C>().*fp)(params[1]);
-   return Any(0);
+   return Any();
 }
 template <class C, class A0>
 struct getType<void (C::*)(A0) const>
@@ -1890,6 +1926,7 @@ struct getType<void (C::*)(A0) const>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoidConstClass1<C, A0>;
       fti->members.add(new Member(getTypeAdd<const C>()));
       fti->members.add(new Member(getTypeAdd<A0>()));
@@ -1904,7 +1941,7 @@ Any delegVoidConstClass2(Any* fp1, Any* params, int64_t n)
    if (n != 3) throw "wrong number of params";
    void (C::*fp)(A0, A1) const = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2]);
-   return Any(0);
+   return Any();
 }
 template <class C, class A0, class A1>
 struct getType<void (C::*)(A0,A1) const>
@@ -1921,6 +1958,7 @@ struct getType<void (C::*)(A0,A1) const>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoidConstClass2<C, A0, A1>;
       fti->members.add(new Member(getTypeAdd<const C>()));
       fti->members.add(new Member(getTypeAdd<A0>()));
@@ -1936,7 +1974,7 @@ Any delegVoidConstClass3(Any* fp1, Any* params, int64_t n)
    if (n != 4) throw "wrong number of params";
    void (C::*fp)(A0, A1, A2) const = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3]);
-   return Any(0);
+   return Any();
 }
 template <class C, class A0, class A1, class A2>
 struct getType<void (C::*)(A0,A1,A2) const>
@@ -1953,6 +1991,7 @@ struct getType<void (C::*)(A0,A1,A2) const>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoidConstClass3<C, A0, A1, A2>;
       fti->members.add(new Member(getTypeAdd<const C>()));
       fti->members.add(new Member(getTypeAdd<A0>()));
@@ -1969,7 +2008,7 @@ Any delegVoidConstClass4(Any* fp1, Any* params, int64_t n)
    if (n != 5) throw "wrong number of params";
    void (C::*fp)(A0, A1, A2, A3) const = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4]);
-   return Any(0);
+   return Any();
 }
 template <class C, class A0, class A1, class A2, class A3>
 struct getType<void (C::*)(A0,A1,A2,A3) const>
@@ -1986,6 +2025,7 @@ struct getType<void (C::*)(A0,A1,A2,A3) const>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoidConstClass4<C, A0, A1, A2, A3>;
       fti->members.add(new Member(getTypeAdd<const C>()));
       fti->members.add(new Member(getTypeAdd<A0>()));
@@ -2003,7 +2043,7 @@ Any delegVoidConstClass5(Any* fp1, Any* params, int64_t n)
    if (n != 6) throw "wrong number of params";
    void (C::*fp)(A0, A1, A2, A3, A4) const = *fp1;
    (params[0].as<C>().*fp)(params[1], params[2], params[3], params[4], params[5]);
-   return Any(0);
+   return Any();
 }
 template <class C, class A0, class A1, class A2, class A3, class A4>
 struct getType<void (C::*)(A0,A1,A2,A3,A4) const>
@@ -2020,6 +2060,7 @@ struct getType<void (C::*)(A0,A1,A2,A3,A4) const>
       fti->copyCon  = CopyCon<Type>::go;
       fti->destruct = destructnothing;
       fti->kind     = kFunction;
+      fti->of       = getTypeAdd<void>();
       fti->delegPtr = delegVoidConstClass5<C, A0, A1, A2, A3, A4>;
       fti->members.add(new Member(getTypeAdd<const C>()));
       fti->members.add(new Member(getTypeAdd<A0>()));
@@ -2475,6 +2516,7 @@ struct getType<Multimethod<R>>
       typeInfo->multimethod = true;
       typeInfo->of       = getTypeAdd<R>();
       typeInfo->delegPtr = delegMM<R>;
+      addTypeLink(getTypeAdd<MMBase>(), typeInfo);
       return typeInfo;
    }
 };
@@ -2496,6 +2538,7 @@ struct getType<Multimethod<void>>
       typeInfo->multimethod = true;
       typeInfo->of       = getTypeAdd<void>();
       typeInfo->delegPtr = delegMMV;
+      addTypeLink(getTypeAdd<MMBase>(), typeInfo);
       return typeInfo;
    }
 };
@@ -2563,14 +2606,24 @@ extern MissingArg mA;
 
 struct PartApply
 {
-   int64_t pArgsFixed;
-   Vec     argsFixed;
+   std::vector<bool> fixed;
+   Vec          args;
 };
 
+PartApply* partApply(MissingArg, Any a0);
 PartApply* partApply(Any f, Any a0);
-PartApply* partApply(Any f, Any a0, Any a1);
+PartApply* partApply(MissingArg, MissingArg, Any a1);
+PartApply* partApply(Any fn, MissingArg, Any a1);
+PartApply* partApply(MissingArg, Any a0, Any a1);
+PartApply* partApply(Any fn, Any a0, Any a1);
 
 Any delegPartApply(Any* cl, Any* args, int64_t n);
+
+template <typename F>
+Any functor(F f)
+{
+   return partApply(&F::operator(), f);
+}
 
 template <>
 struct getType<PartApply*>
@@ -2600,6 +2653,9 @@ struct PH
 };
 
 extern TypeInfo* tiPH;
+extern TypeInfo* tiMissingArg;
+extern TypeInfo* tiPartApply;
+extern TypeInfo* tiBind;
 
 struct Bind
 {
@@ -2666,13 +2722,6 @@ struct getType<VarFunc>
    }
 };
 
-template <class F>
-struct Functor
-{
-   F f;
-   Any call;
-};
-
 struct Var
 {
    std::string   name;
@@ -2691,11 +2740,11 @@ namespace List
    struct Closure
    {
       std::deque<Var>  params;
-      Var         rest;
-      Any         body;
-      Frame*      context;
-      int64_t         minArgs;
-      int64_t         maxArgs;
+      Var              rest;
+      Any              body;
+      Frame*           context;
+      int64_t          minArgs;
+      int64_t          maxArgs;
 
       Closure() : context(nullptr), minArgs(0), maxArgs(0) {}
       Closure(Any params, Any body, Frame* context = nullptr);
@@ -2724,6 +2773,22 @@ namespace Struct
 
    extern Stack* stack;
 }
+
+struct ExprIterator;
+
+struct Expr
+{
+   virtual      ~Expr () {}
+   virtual void accept(ExprIterator* iterator) {};
+};
+
+struct Lambda : public Expr
+{
+   TypeInfo* type;
+   Expr*     body;
+   Lambda(TypeInfo* type, Expr* body) : type(type), body(body) { }
+   virtual void accept(ExprIterator* iterator);
+};
 
 template <>
 struct getType<List::Closure*>
@@ -2767,6 +2832,138 @@ struct getType<Struct::Closure*>
    }
 };
 
+extern Multimethod<Any> convert;
+
+template <class To>
+To Any::as2()
+{
+   TypeInfo* toType = getTypeAdd<To>();
+   TypeInfo* toType1 = toType;
+   int64_t toRL = 0;//to type ref levels: toRL can only be 0 or 1 and it makes no difference to the code required, except that adding more than one level of indirection will be bad
+   int64_t toPL = 0;//to type pointer levels
+   while (true)
+   {
+      if (toType->kind == kReference)
+      {
+         toType = toType->of;
+         ++toRL;
+      }
+      else if (toType->kind == kPointer)
+      {
+         toType = toType->of;
+         ++toPL;
+      }
+      else
+         break;
+   }
+
+   //an Any is basically just a pointer to T
+   //can convert an Any containing T to a pointer to the T
+   //can convert a pointer to Any containing T to a pointer to a pointer to the T
+
+   //if you can convert the Any to a pointer to Any then
+   //can convert an Any containing T to a pointer to a pointer to the T
+
+   //can convert an (Any containing Any containing T) to a (pointer to a pointer to the T)
+
+   //uses for pointers/references
+   //cheaper than copies for some types
+   //can change original remotely (but why?)
+   //   to sneakily return results
+   //   for returning from container getItem functions so you don't need a separate setItem function
+   //   for passing to assignment functions
+   //   for passing to anything that modifies the original and you want to keep the changes, such as passing this to member functions for containers
+
+   //can make a linked list of types-to-contained-types by extracting values from pointers/refs/nested Anys
+   //do we need that? or just to drill down?
+   //if we're converting to pointer(s) to Any we don't know the target nested type so there's nothing to compare our linked list to
+   //we need to drill down if we want to eventually get down to a type that is not a pointer(s)/ref(s) to Any
+   //so there's two cases, pointer(s) to Any and pointer(s) to T???
+
+   //if pointer(s) to Any
+   if (toType == tiAny)
+   {
+   }
+   else
+   {
+   }
+
+   int64_t fromRL = 0;
+   int64_t fromPL = 0;
+   AnyBase from(*this);
+   while (true)
+   {
+      if (from.canderp())
+      {
+         if (from.typeInfo->kind == kReference)
+            ++fromRL;
+         else
+            ++fromPL;
+         from = from.derp();
+      }
+      else if (from.candeany())
+      {
+         ++fromRL;
+         from = from.deany();
+      }
+      else
+         break;
+   }
+   TypeInfo* fromType = from.typeInfo;
+   if (toPL + toRL == 0)
+   {
+      return convert(toType, Any(from.typeInfo, from.payload));//uh-oh, cannot return a reference to this
+   }
+   //include toRL in the calculation?
+   //maybe not because conversion between references and values is automatic on the C++ side (but not on the interpreted side)
+   //doing conversions when toPL is not equal to fromPL is probably not great but leave it in for now
+   int64_t indirChange = toPL - fromRL - fromPL;
+
+   //maybe put something in to disallow slicing
+   //only allow conversions from derived to base 
+   //(maybe restrict it to a single layer of indirection too unless const, 
+   //but DEFINITELY if different offsets due to multiple inheritance)
+   if (!hasLink(toType, fromType))
+   {
+      std::ostringstream o;
+      o << "types unrelated: attempt to cast from " << fromType->getName() << " to " << toType1->getName();
+      std::cout << o.str() << std::endl;
+      throw std::runtime_error(o.str());
+   }
+   if (indirChange > 1)
+   {
+      std::ostringstream o;
+      o << "cannot add more than 1 indirection: attempt to cast from " << fromType->getName() << " to " << toType1->getName();
+      std::cout << o.str() << std::endl;
+      throw std::runtime_error(o.str());
+   }
+   if (indirChange == 1)
+   {
+      return *static_cast<To*>((void*) & payload);
+   }
+   if (indirChange == 0)
+   {
+      return *static_cast<To*>(payload);
+   }
+   from = *this;
+   while (indirChange < 0)
+   {
+      if (from.canderp())
+      {
+         ++indirChange;
+         from = from.derp();
+      }
+      else if (from.candeany())
+      {
+         ++indirChange;
+         from = from.deany();
+      }
+      else
+         throw "We've lost some layers of indirection since we checked earlier in the function!";
+   }
+   return *static_cast<To*>(from.payload);
+}
+
 
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
