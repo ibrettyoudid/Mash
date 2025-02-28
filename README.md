@@ -1,4 +1,7 @@
 # Mash
+
+(requires MSVC)
+
 An interpreter written in C++
 
 The language is a mash up of other programming languages (Scheme, Lisp, Haskell, C++)
